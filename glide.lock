@@ -1,0 +1,16 @@
+hash: 899d9c19a3d9e2a690aaad02f3429e9e7cb119a9fb9dca6df8d78a438069b7c1
+updated: 2017-07-05T16:57:34.840276269-07:00
+imports:
+- name: github.com/coreos/pkg
+  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
+- name: github.com/google/go-github
+  version: fe7d11f8add400587b6718d9f39a62e42cb04c28
+- name: github.com/Sirupsen/logrus
+  version: 202f25545ea4cf9b191ff7f846df5d87c9382c2b
+- name: github.com/spf13/cobra
+  version: 8c6fa02d2225de0f9bdcb7ca912556f68d172d8c
+- name: github.com/spf13/viper
+  version: c1de95864d73a5465492829d7cb2dd422b19ac96
+- name: golang.org/x/oauth2
+  version: 3c3a985cb79f52a3190fbc056984415ca6763d01
+testImports: []
