@@ -1,61 +1,364 @@
 package cmd
 
 import (
-	"strings"
-
-	"os"
-
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/andygrunwald/go-jira"
 	"github.com/fsnotify/fsnotify"
+	"github.com/google/go-github/github"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/oauth2"
 )
 
 var (
-	log             *logrus.Logger
+	log             *logrus.Entry
 	defaultLogLevel = logrus.InfoLevel
 	rootCmdFile     string
 	rootCmdCfg      *viper.Viper
+
+	since               time.Time // The earliest GitHub issue updates we want to retrieve
+	ghIDFieldID         string    // The customfield ID of the GitHub ID field in JIRA
+	ghNumFieldID        string    // The customfield ID of the GitHub Number field in JIRA
+	ghLabelsFieldID     string    // The customfield ID of the GitHub Labels field in JIRA
+	isLastUpdateFieldID string    // The customfield ID of the Last Issue-Sync Update field in JIRA
+
+	project jira.Project
 )
+
+const dateFormat = "2006-01-02T15:04:05-0700"
 
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
+}
+
+func GetGitHubClient(token string) (*github.Client, error) {
+	ctx := context.Background()
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+
+	client := github.NewClient(tc)
+
+	// Make a request so we can check that we can connect fine.
+	_, res, err := client.RateLimits(ctx)
+	if err != nil {
+		log.Errorf("Error connecting to GitHub; check your token. Error: %v", err)
+		return nil, err
+	} else if err = github.CheckResponse(res.Response); err != nil {
+		log.Errorf("Error connecting to GitHub; check your token. Error: %v", err)
+		return nil, err
+	}
+
+	log.Debugln("Successfully connected to GitHub.")
+	return client, nil
+}
+
+func GetJIRAClient(username, password, baseURL string) (*jira.Client, error) {
+	client, err := jira.NewClient(nil, baseURL)
+	if err != nil {
+		log.Errorf("Error initializing JIRA client; check your base URI. Error: %v", err)
+		return nil, err
+	}
+	client.Authentication.SetBasicAuth(username, password)
+
+	log.Debug("JIRA client initialized; getting project")
+
+	proj, resp, err := client.Project.Get(rootCmdCfg.GetString("jira-project"))
+	if err != nil {
+		log.Errorf("Unknown error using JIRA client. Error: %v", err)
+		return nil, err
+	} else if resp.StatusCode == 404 {
+		log.Errorf("Error retrieving JIRA project; check your key. Error: %v", err)
+		return nil, jira.CheckResponse(resp.Response)
+	} else if resp.StatusCode == 401 {
+		log.Errorf("Error connecting to JIRA; check your credentials. Error: %v", err)
+		return nil, jira.CheckResponse(resp.Response)
+	}
+	project = *proj
+
+	log.Debug("Successfully connected to JIRA.")
+	return client, nil
 }
 
 var RootCmd = &cobra.Command{
 	Use:   "issue-sync [options]",
 	Short: "A tool to synchronize GitHub and JIRA issues",
 	Long:  "Full docs coming later; see https://github.com/coreos/issue-sync",
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PreRun: func(cmd *cobra.Command, args []string) {
 		rootCmdCfg.BindPFlags(cmd.Flags())
-		initRootLogger()
+		log = newLogger("issue-sync", rootCmdCfg.GetString("log-level"))
 	},
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Called root job; not written yet")
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateConfig(); err != nil {
+			return err
+		}
+
+		ghClient, err := GetGitHubClient(rootCmdCfg.GetString("github-token"))
+		if err != nil {
+			return err
+		}
+		jiraClient, err := GetJIRAClient(
+			rootCmdCfg.GetString("jira-user"),
+			rootCmdCfg.GetString("jira-pass"),
+			rootCmdCfg.GetString("jira-uri"),
+		)
+		if err != nil {
+			return err
+		}
+
+		if err := getFieldIDs(*jiraClient); err != nil {
+			return err
+		}
+
+		if err := compareIssues(*ghClient, *jiraClient); err != nil {
+			return err
+		}
+
+		return setLastUpdateTime()
 	},
 }
 
+func validateConfig() error {
+	// Log level and config file location are validated already
+
+	log.Debug("Checking config variables...")
+	token := rootCmdCfg.GetString("github-token")
+	if token == "" {
+		return errors.New("GitHub token required")
+	}
+
+	jUser := rootCmdCfg.GetString("jira-user")
+	if jUser == "" {
+		return errors.New("Jira username required")
+	}
+
+	jPass := rootCmdCfg.GetString("jira-pass")
+	if jPass == "" {
+		return errors.New("Jira password required")
+	}
+
+	repo := rootCmdCfg.GetString("repo-name")
+	if repo == "" {
+		return errors.New("GitHub repository required")
+	}
+	if !strings.Contains(repo, "/") || len(strings.Split(repo, "/")) != 2 {
+		return errors.New("GitHub repository must be of form user/repo")
+	}
+
+	uri := rootCmdCfg.GetString("jira-uri")
+	if uri == "" {
+		return errors.New("JIRA URI required")
+	}
+	if _, err := url.ParseRequestURI(uri); err != nil {
+		return errors.New("JIRA URI must be valid URI")
+	}
+
+	project := rootCmdCfg.GetString("jira-project")
+	if project == "" {
+		return errors.New("JIRA project required")
+	}
+
+	sinceStr := rootCmdCfg.GetString("since")
+	if sinceStr == "" {
+		rootCmdCfg.Set("since", "1970-01-01T00:00:00+0000")
+	}
+	var err error
+	since, err = time.Parse(dateFormat, sinceStr)
+	if err != nil {
+		return errors.New("Since date must be in ISO-8601 format")
+	}
+	log.Debug("All config variables are valid!")
+
+	return nil
+}
+
+type JIRAField struct {
+	ID          string   `json:"id"`
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Custom      bool     `json:"custom"`
+	Orderable   bool     `json:"orderable"`
+	Navigable   bool     `json:"navigable"`
+	Searchable  bool     `json:"searchable"`
+	ClauseNames []string `json:"clauseNames"`
+	Schema      struct {
+		Type     string `json:"type"`
+		System   string `json:"system,omitempty"`
+		Items    string `json:"items,omitempty"`
+		Custom   string `json:"custom,omitempty"`
+		CustomID int    `json:"customId,omitempty"`
+	} `json:"schema,omitempty"`
+}
+
+func getFieldIDs(client jira.Client) error {
+	log.Debug("Collecting field IDs.")
+	req, err := client.NewRequest("GET", "/rest/api/2/field", nil)
+	if err != nil {
+		return err
+	}
+	fields := new([]JIRAField)
+
+	_, err = client.Do(req, fields)
+	if err != nil {
+		return err
+	}
+
+	for _, field := range *fields {
+		switch field.Name {
+		case "GitHub ID":
+			ghIDFieldID = fmt.Sprint(field.Schema.CustomID)
+		case "GitHub Number":
+			ghNumFieldID = fmt.Sprint(field.Schema.CustomID)
+		case "GitHub Labels":
+			ghLabelsFieldID = fmt.Sprint(field.Schema.CustomID)
+		case "Last Issue-Sync Update":
+			isLastUpdateFieldID = fmt.Sprint(field.Schema.CustomID)
+		}
+	}
+
+	if ghIDFieldID == "" {
+		return errors.New("Could not find ID of 'GitHub ID' custom field. Check that it is named correctly.")
+	} else if ghNumFieldID == "" {
+		return errors.New("Could not find ID of 'GitHub Number' custom field. Check that it is named correctly.")
+	} else if ghLabelsFieldID == "" {
+		return errors.New("Could not find ID of 'Github Labels' custom field. Check that it is named correctly.")
+	} else if isLastUpdateFieldID == "" {
+		return errors.New("Could not find ID of 'Last Issue-Sync Update' custom field. Check that it is named correctly.")
+	}
+
+	log.Debug("All fields have been checked.")
+
+	return nil
+}
+
+func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
+	log.Debug("Collecting issues")
+	ctx := context.Background()
+
+	repo := strings.Split(rootCmdCfg.GetString("repo-name"), "/")
+
+	ghIssues, _, err := ghClient.Issues.ListByRepo(ctx, repo[0], repo[1], &github.IssueListByRepoOptions{
+		Since: since,
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if len(ghIssues) == 0 {
+		log.Info("There are no GitHub issues; exiting")
+		return nil
+	}
+	log.Debug("Collected all GitHub issues")
+
+	ids := make([]string, len(ghIssues))
+	for i, v := range ghIssues {
+		ids[i] = fmt.Sprint(*v.ID)
+	}
+
+	jql := fmt.Sprintf("project='%s' AND cf[%s] in (%s)",
+		rootCmdCfg.GetString("jira-project"), ghIDFieldID, strings.Join(ids, ","))
+
+	jiraIssues, _, err := jiraClient.Issue.Search(jql, nil)
+	if err != nil {
+		return err
+	}
+
+	log.Debug("Collected all JIRA issues")
+
+	for _, ghIssue := range ghIssues {
+		found := false
+		for _, jIssue := range jiraIssues {
+			id, _ := jIssue.Fields.Unknowns.Int(fmt.Sprintf("customfield_%s", ghIDFieldID))
+			if int64(*ghIssue.ID) == id {
+				found = true
+				if err := updateIssue(*ghIssue, jIssue); err != nil {
+					log.Errorf("Error updating issue %s. Error: %v", jIssue.Key, err)
+				}
+				break
+			}
+		}
+		if !found {
+			if err := createIssue(*ghIssue, jiraClient); err != nil {
+				log.Errorf("Error creating issue for #%d. Error: %v", *ghIssue.Number, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func updateIssue(ghIssue github.Issue, jIssue jira.Issue) error {
+	log.Debugf("Updating JIRA issue %s with GitHub issue %d", jIssue.ID, *ghIssue.ID)
+	return nil
+}
+
+func createIssue(issue github.Issue, client jira.Client) error {
+	log.Debugf("Creating JIRA issue based on GitHub issue #%d", *issue.Number)
+	return nil
+}
+
+type Config struct {
+	LogLevel    string `json:"log-level" mapstructure:"log-level"`
+	GithubToken string `json:"github-token" mapstructure:"github-token"`
+	JiraUser    string `json:"jira-user" mapstructure:"jira-user"`
+	JiraPass    string `json:"jira-pass" mapstructure:"jira-pass"`
+	RepoName    string `json:"repo-name" mapstructure:"repo-name"`
+	JiraUri     string `json:"jira-uri" mapstructure:"jira-uri"`
+	JiraProject string `json:"jira-project" mapstructure:"jira-project"`
+	Since       string `json:"since" mapstructure:"since"`
+}
+
+func setLastUpdateTime() error {
+	rootCmdCfg.Set("since", time.Now().Format(dateFormat))
+
+	var c Config
+	rootCmdCfg.Unmarshal(&c)
+
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(rootCmdCfg.ConfigFileUsed(), os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	f.WriteString(string(b))
+
+	return nil
+}
+
 func init() {
-	log = logrus.New()
+	log = logrus.NewEntry(logrus.New())
 	cobra.OnInitialize(func() {
 		rootCmdCfg = newViper("issue-sync", rootCmdFile)
 	})
 	RootCmd.PersistentFlags().String("log-level", logrus.InfoLevel.String(), "Set the global log level")
 	RootCmd.PersistentFlags().StringVar(&rootCmdFile, "config", "", "Config file (default is $HOME/.issue-sync.yaml)")
-	RootCmd.PersistentFlags().String("github-token", "", "Set the API Token used to access the GitHub repo")
-}
+	RootCmd.PersistentFlags().StringP("github-token", "t", "", "Set the API Token used to access the GitHub repo")
+	RootCmd.PersistentFlags().StringP("jira-user", "u", "", "Set the JIRA username to authenticate with")
+	RootCmd.PersistentFlags().StringP("jira-pass", "p", "", "Set the JIRA password to authenticate with")
+	RootCmd.PersistentFlags().StringP("repo-name", "r", "", "Set the repository path (should be form owner/repo)")
+	RootCmd.PersistentFlags().StringP("jira-uri", "U", "", "Set the base uri of the JIRA instance")
+	RootCmd.PersistentFlags().StringP("jira-project", "P", "", "Set the key of the JIRA project")
+	RootCmd.PersistentFlags().StringP("since", "s", "1970-01-01T00:00:00+0000", "Set the day that the update should run forward from")
 
-func initRootLogger() {
-	log = logrus.New()
-
-	logLevel := parseLogLevel(rootCmdCfg.GetString("log-level"))
-	log.Level = logLevel
-	log.WithField("log-level", logLevel).Debug("root log level set")
 }
 
 func parseLogLevel(level string) logrus.Level {
