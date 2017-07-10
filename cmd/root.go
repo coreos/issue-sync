@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"strings"
@@ -29,6 +30,8 @@ var (
 	ghIDFieldID         string    // The customfield ID of the GitHub ID field in JIRA
 	ghNumFieldID        string    // The customfield ID of the GitHub Number field in JIRA
 	ghLabelsFieldID     string    // The customfield ID of the GitHub Labels field in JIRA
+	ghStatusFieldID     string    // The customfield ID of the GitHub Status field in JIRA
+	ghReporterFieldID   string    // The customfield ID of the GitHub Reporter field in JIRA
 	isLastUpdateFieldID string    // The customfield ID of the Last Issue-Sync Update field in JIRA
 
 	project jira.Project
@@ -223,6 +226,10 @@ func getFieldIDs(client jira.Client) error {
 			ghNumFieldID = fmt.Sprint(field.Schema.CustomID)
 		case "GitHub Labels":
 			ghLabelsFieldID = fmt.Sprint(field.Schema.CustomID)
+		case "GitHub Status":
+			ghStatusFieldID = fmt.Sprint(field.Schema.CustomID)
+		case "GitHub Reporter":
+			ghReporterFieldID = fmt.Sprint(field.Schema.CustomID)
 		case "Last Issue-Sync Update":
 			isLastUpdateFieldID = fmt.Sprint(field.Schema.CustomID)
 		}
@@ -234,6 +241,10 @@ func getFieldIDs(client jira.Client) error {
 		return errors.New("Could not find ID of 'GitHub Number' custom field. Check that it is named correctly.")
 	} else if ghLabelsFieldID == "" {
 		return errors.New("Could not find ID of 'Github Labels' custom field. Check that it is named correctly.")
+	} else if ghStatusFieldID == "" {
+		return errors.New("Could not find ID of 'Github Status' custom field. Check that it is named correctly.")
+	} else if ghReporterFieldID == "" {
+		return errors.New("Could not find ID of 'Github Reporter' custom field. Check that it is named correctly.")
 	} else if isLastUpdateFieldID == "" {
 		return errors.New("Could not find ID of 'Last Issue-Sync Update' custom field. Check that it is named correctly.")
 	}
@@ -308,6 +319,48 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue) error {
 
 func createIssue(issue github.Issue, client jira.Client) error {
 	log.Debugf("Creating JIRA issue based on GitHub issue #%d", *issue.Number)
+
+	fields := jira.IssueFields{
+		Type: jira.IssueType{
+			Name: "Task", // TODO: Determine issue type
+		},
+		Project:     project,
+		Summary:     *issue.Title,
+		Description: *issue.Body,
+		Unknowns:    map[string]interface{}{},
+	}
+
+	key := fmt.Sprintf("customfield_%s", ghIDFieldID)
+	fields.Unknowns[key] = *issue.ID
+	key = fmt.Sprintf("customfield_%s", ghNumFieldID)
+	fields.Unknowns[key] = *issue.Number
+	key = fmt.Sprintf("customfield_%s", ghStatusFieldID)
+	fields.Unknowns[key] = *issue.State
+	key = fmt.Sprintf("customfield_%s", ghReporterFieldID)
+	fields.Unknowns[key] = issue.User.GetLogin()
+	key = fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+	strs := make([]string, len(issue.Labels))
+	for i, v := range issue.Labels {
+		strs[i] = *v.Name
+	}
+	fields.Unknowns[key] = strings.Join(strs, ",")
+	key = fmt.Sprintf("customfield_%s", isLastUpdateFieldID)
+	fields.Unknowns[key] = time.Now().Format("2006-01-02T15:04:05-0700")
+
+	jIssue := &jira.Issue{
+		Fields: &fields,
+	}
+
+	jIssue, res, err := client.Issue.Create(jIssue)
+	if err != nil {
+		log.Errorf("Error creating JIRA issue: %s", err)
+		defer res.Body.Close()
+		body, _ := ioutil.ReadAll(res.Body)
+		log.Debugf("Error body: %s", body)
+		return err
+	}
+
+	log.Debugf("Created JIRA issue #%s!", jIssue.ID)
 	return nil
 }
 
