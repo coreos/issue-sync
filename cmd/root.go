@@ -312,8 +312,79 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	return nil
 }
 
-func updateIssue(ghIssue github.Issue, jIssue jira.Issue) error {
-	log.Debugf("Updating JIRA issue %s with GitHub issue %d", jIssue.ID, *ghIssue.ID)
+func updateIssue(ghIssue github.Issue, jIssue jira.Issue, client jira.Client) error {
+	log.Debugf("Updating JIRA %s with GitHub #%d", jIssue.Key, *ghIssue.Number)
+
+	anyDifferent := false
+
+	fields := jira.IssueFields{}
+	fields.Unknowns = map[string]interface{}{}
+
+	if *ghIssue.Title != jIssue.Fields.Summary {
+		anyDifferent = true
+		fields.Summary = *ghIssue.Title
+	}
+
+	if *ghIssue.Body != jIssue.Fields.Description {
+		anyDifferent = true
+		fields.Description = *ghIssue.Body
+	}
+
+	key := fmt.Sprintf("customfield_%s", ghStatusFieldID)
+	field, err := jIssue.Fields.Unknowns.String(key)
+	if err != nil || *ghIssue.State != field {
+		anyDifferent = true
+		fields.Unknowns[key] = *ghIssue.State
+	}
+
+	key = fmt.Sprintf("customfield_%s", ghReporterFieldID)
+	field, err = jIssue.Fields.Unknowns.String(key)
+	if err != nil || *ghIssue.User.Login != field {
+		anyDifferent = true
+		fields.Unknowns[key] = *ghIssue.User.Login
+	}
+
+	labels := make([]string, len(ghIssue.Labels))
+	for i, l := range ghIssue.Labels {
+		labels[i] = *l.Name
+	}
+
+	key = fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+	field, err = jIssue.Fields.Unknowns.String(key)
+	if err != nil || strings.Join(labels, ",") != field {
+		anyDifferent = true
+		fields.Unknowns[key] = strings.Join(labels, ",")
+	}
+
+	if !anyDifferent {
+		log.Debugf("JIRA issue %s is already up to date!", jIssue.Key)
+		return nil
+	}
+
+	key = fmt.Sprintf("customfield_%s", isLastUpdateFieldID)
+	fields.Unknowns[key] = time.Now().Format("2006-01-02T15:04:05-0700")
+
+	fields.Type = jIssue.Fields.Type
+	fields.Summary = jIssue.Fields.Summary
+
+	issue := &jira.Issue{
+		Fields: &fields,
+		Key:    jIssue.Key,
+		ID:     jIssue.ID,
+	}
+
+	issue, res, err := client.Issue.Update(issue)
+
+	if err != nil {
+		log.Errorf("Error updating JIRA issue %s: %s", jIssue.Key, err)
+		defer res.Body.Close()
+		body, _ := ioutil.ReadAll(res.Body)
+		log.Debugf("Error body: %s", body)
+		return err
+	}
+
+	log.Debugf("Successfully updated JIRA issue %s!", jIssue.Key)
+
 	return nil
 }
 
