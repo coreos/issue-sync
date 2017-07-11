@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -40,10 +42,23 @@ var (
 )
 
 const dateFormat = "2006-01-02T15:04:05-0700"
+const commentDateFormat = "15:04 PM, January 2 2006"
 
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func getErrorBody(res *jira.Response) error {
+	defer res.Body.Close()
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		log.Errorf("Error occured trying to read error body: %v", err)
+		return err
+	} else {
+		log.Debugf("Error body: %s", body)
+		return errors.New(string(body))
 	}
 }
 
@@ -303,14 +318,14 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 			id, _ := jIssue.Fields.Unknowns.Int(fmt.Sprintf("customfield_%s", ghIDFieldID))
 			if int64(*ghIssue.ID) == id {
 				found = true
-				if err := updateIssue(*ghIssue, jIssue, jiraClient); err != nil {
+				if err := updateIssue(*ghIssue, jIssue, ghClient, jiraClient); err != nil {
 					log.Errorf("Error updating issue %s. Error: %v", jIssue.Key, err)
 				}
 				break
 			}
 		}
 		if !found {
-			if err := createIssue(*ghIssue, jiraClient); err != nil {
+			if err := createIssue(*ghIssue, ghClient, jiraClient); err != nil {
 				log.Errorf("Error creating issue for #%d. Error: %v", *ghIssue.Number, err)
 			}
 		}
@@ -319,7 +334,7 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	return nil
 }
 
-func updateIssue(ghIssue github.Issue, jIssue jira.Issue, client jira.Client) error {
+func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
 	log.Debugf("Updating JIRA %s with GitHub #%d", jIssue.Key, *ghIssue.Number)
 
 	anyDifferent := false
@@ -358,44 +373,61 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, client jira.Client) er
 
 	key = fmt.Sprintf("customfield_%s", ghLabelsFieldID)
 	field, err = jIssue.Fields.Unknowns.String(key)
-	if err != nil || strings.Join(labels, ",") != field {
+	if err != nil && strings.Join(labels, ",") != field {
 		anyDifferent = true
 		fields.Unknowns[key] = strings.Join(labels, ",")
 	}
 
-	if !anyDifferent {
+	if anyDifferent {
+		key = fmt.Sprintf("customfield_%s", isLastUpdateFieldID)
+		fields.Unknowns[key] = time.Now().Format(dateFormat)
+
+		fields.Type = jIssue.Fields.Type
+		fields.Summary = jIssue.Fields.Summary
+
+		issue := &jira.Issue{
+			Fields: &fields,
+			Key:    jIssue.Key,
+			ID:     jIssue.ID,
+		}
+
+		issue, res, err := jClient.Issue.Update(issue)
+
+		if err != nil {
+			log.Errorf("Error updating JIRA issue %s: %v", jIssue.Key, err)
+			return getErrorBody(res)
+		}
+
+		log.Debugf("Successfully updated JIRA issue %s!", jIssue.Key)
+	} else {
 		log.Debugf("JIRA issue %s is already up to date!", jIssue.Key)
-		return nil
 	}
 
-	key = fmt.Sprintf("customfield_%s", isLastUpdateFieldID)
-	fields.Unknowns[key] = time.Now().Format("2006-01-02T15:04:05-0700")
-
-	fields.Type = jIssue.Fields.Type
-	fields.Summary = jIssue.Fields.Summary
-
-	issue := &jira.Issue{
-		Fields: &fields,
-		Key:    jIssue.Key,
-		ID:     jIssue.ID,
-	}
-
-	issue, res, err := client.Issue.Update(issue)
-
+	issue, _, err := jClient.Issue.Get(jIssue.ID, nil)
 	if err != nil {
-		log.Errorf("Error updating JIRA issue %s: %s", jIssue.Key, err)
-		defer res.Body.Close()
-		body, _ := ioutil.ReadAll(res.Body)
-		log.Debugf("Error body: %s", body)
+		log.Errorf("Error retrieving JIRA issue %s to get comments.", jIssue.Key)
+	}
+
+	var comments []jira.Comment
+	if issue.Fields.Comments == nil {
+		log.Debugf("JIRA issue %s has no comments.", jIssue.Key)
+	} else {
+		commentPtrs := issue.Fields.Comments.Comments
+		comments = make([]jira.Comment, len(commentPtrs))
+		for i, v := range commentPtrs {
+			comments[i] = *v
+		}
+		log.Debugf("JIRA issue %s has %d comments", jIssue.Key, len(comments))
+	}
+
+	if err = createComments(ghIssue, jIssue, comments, ghClient, jClient); err != nil {
 		return err
 	}
-
-	log.Debugf("Successfully updated JIRA issue %s!", jIssue.Key)
 
 	return nil
 }
 
-func createIssue(issue github.Issue, client jira.Client) error {
+func createIssue(issue github.Issue, ghClient github.Client, jClient jira.Client) error {
 	log.Debugf("Creating JIRA issue based on GitHub issue #%d", *issue.Number)
 
 	fields := jira.IssueFields{
@@ -423,22 +455,153 @@ func createIssue(issue github.Issue, client jira.Client) error {
 	}
 	fields.Unknowns[key] = strings.Join(strs, ",")
 	key = fmt.Sprintf("customfield_%s", isLastUpdateFieldID)
-	fields.Unknowns[key] = time.Now().Format("2006-01-02T15:04:05-0700")
+	fields.Unknowns[key] = time.Now().Format(dateFormat)
 
 	jIssue := &jira.Issue{
 		Fields: &fields,
 	}
 
-	jIssue, res, err := client.Issue.Create(jIssue)
+	jIssue, res, err := jClient.Issue.Create(jIssue)
 	if err != nil {
-		log.Errorf("Error creating JIRA issue: %s", err)
-		defer res.Body.Close()
-		body, _ := ioutil.ReadAll(res.Body)
-		log.Debugf("Error body: %s", body)
+		log.Errorf("Error creating JIRA issue: %v", err)
+		return getErrorBody(res)
+	}
+
+	log.Debugf("Created JIRA issue %s!", jIssue.Key)
+
+	if err = createComments(issue, *jIssue, nil, ghClient, jClient); err != nil {
 		return err
 	}
 
-	log.Debugf("Created JIRA issue #%s!", jIssue.ID)
+	return nil
+}
+
+var jCommentRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\) from GitHub user (\\w+) \\((.+)\\)? at (.+):\\n\\n(.+)$")
+var jCommentIDRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\)")
+
+func createComments(ghIssue github.Issue, jIssue jira.Issue, existing []jira.Comment, ghClient github.Client, jClient jira.Client) error {
+	if *ghIssue.Comments == 0 {
+		log.Debugf("Issue #%d has no comments, skipping.", *ghIssue.Number)
+		return nil
+	}
+
+	ctx := context.Background()
+	repo := strings.Split(rootCmdCfg.GetString("repo-name"), "/")
+	comments, _, err := ghClient.Issues.ListComments(ctx, repo[0], repo[1], *ghIssue.Number, &github.IssueListCommentsOptions{
+		Sort:      "created",
+		Direction: "asc",
+	})
+	if err != nil {
+		log.Errorf("Error retrieving GitHub comments for issue #%d. Error: %v.", *ghIssue.Number, err)
+		return err
+	}
+
+	for _, ghComment := range comments {
+		found := false
+		for _, jComment := range existing {
+			if !jCommentIDRegex.MatchString(jComment.Body) {
+				continue
+			}
+			// matches[0] is the whole string, matches[1] is the ID
+			matches := jCommentIDRegex.FindStringSubmatch(jComment.Body)
+			id, _ := strconv.Atoi(matches[1])
+			if *ghComment.ID != id {
+				continue
+			}
+			found = true
+
+			updateComment(*ghComment, jComment, jIssue, ghClient, jClient)
+			break
+		}
+		if found {
+			continue
+		}
+
+		if err := createComment(*ghComment, jIssue, ghClient, jClient); err != nil {
+			return err
+		}
+	}
+
+	log.Debugf("Copied comments from GH issue #%d to JIRA issue %s.", *ghIssue.Number, jIssue.Key)
+	return nil
+}
+
+func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
+	// fields[0] is the whole body, 1 is the ID, 2 is the username, 3 is the real name (or "" if none)
+	// 4 is the date, and 5 is the real body
+	fields := jCommentRegex.FindStringSubmatch(jComment.Body)
+
+	if fields[5] == *ghComment.Body {
+		return nil
+	}
+
+	user, _, err := ghClient.Users.Get(context.Background(), *ghComment.User.Login)
+	if err != nil {
+		log.Errorf("Error retrieving GitHub user %s. Error: %v", *ghComment.User.Login, err)
+	}
+	body := fmt.Sprintf("Comment (ID %d) from GitHub user %s", *ghComment.ID, user.GetLogin())
+	if user.GetName() != "" {
+		body = fmt.Sprintf("%s (%s)", body, user.GetName())
+	}
+	body = fmt.Sprintf(
+		"%s at %s:\n\n%s",
+		body,
+		ghComment.CreatedAt.Format(commentDateFormat),
+		*ghComment.Body,
+	)
+
+	// As it is, the JIRA API we're using doesn't have any way to update comments natively.
+	// So, we have to build the request ourselves.
+
+	request := struct {
+		Body string `json:"body"`
+	}{
+		Body: body,
+	}
+
+	// TODO: Abstract this into its own method
+	req, err := jClient.NewRequest("PUT", fmt.Sprintf("rest/api/2/issue/%s/comment/%s", jIssue.Key, jComment.ID), request)
+	if err != nil {
+		log.Errorf("Error creating comment update request: %v", err)
+		return err
+	}
+
+	res, err := jClient.Do(req, nil)
+	if err != nil {
+		log.Errorf("Error updating comment: %v", err)
+		return getErrorBody(res)
+	}
+
+	return nil
+}
+
+func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
+	user, _, err := ghClient.Users.Get(context.Background(), *ghComment.User.Login)
+	if err != nil {
+		log.Errorf("Error retrieving GitHub user %s. Error: %v", *ghComment.User.Login, err)
+		return err
+	}
+
+	body := fmt.Sprintf("Comment (ID %d) from GitHub user %s", *ghComment.ID, user.GetLogin())
+	if user.GetName() != "" {
+		body = fmt.Sprintf("%s (%s)", body, user.GetName())
+	}
+	body = fmt.Sprintf(
+		"%s at %s:\n\n%s",
+		body,
+		ghComment.CreatedAt.Format(commentDateFormat),
+		*ghComment.Body,
+	)
+	jComment := &jira.Comment{
+		Body: body,
+	}
+
+	jComment, res, err := jClient.Issue.AddComment(jIssue.ID, jComment)
+	if err != nil {
+		log.Errorf("Error creating JIRA comment on issue %s. Error: %v", jIssue.Key, err)
+		return getErrorBody(res)
+	}
+
 	return nil
 }
 
@@ -525,7 +688,7 @@ func newViper(appName, cfgFile string) *viper.Viper {
 		})
 	} else {
 		if cfgFile != "" {
-			log.WithError(err).Warningf("Error reading config file: %s", cfgFile)
+			log.WithError(err).Warningf("Error reading config file: %v", cfgFile)
 		}
 	}
 
