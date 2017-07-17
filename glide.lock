@@ -1,16 +1,98 @@
-hash: 899d9c19a3d9e2a690aaad02f3429e9e7cb119a9fb9dca6df8d78a438069b7c1
-updated: 2017-07-05T16:57:34.840276269-07:00
+hash: a0339b3b50623cfca11b797c3a2e2be3e4c57226d7929f7565da63ef4bec57bc
+updated: 2017-07-17T14:56:22.502725577-07:00
 imports:
+- name: github.com/andygrunwald/go-jira
+  version: aaa2d02b3ad37877e523eab9978638b107bdc821
+- name: github.com/cenkalti/backoff
+  version: 32cd0c5b3aef12c76ed64aaf678f6c79736be7dc
 - name: github.com/coreos/pkg
   version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
+- name: github.com/fatih/structs
+  version: 7e5a8eef611ee84dd359503f3969f80df4c50723
+- name: github.com/fsnotify/fsnotify
+  version: 4da3e2cfbabc9f751898f250b49f2439785783a1
+- name: github.com/golang/protobuf
+  version: 0a4f71a498b7c4812f64969510bcb4eca251e33a
+  subpackages:
+  - proto
 - name: github.com/google/go-github
-  version: fe7d11f8add400587b6718d9f39a62e42cb04c28
+  version: 00874eae3fbfc6750bfff364b1897101684d2f30
+  subpackages:
+  - github
+- name: github.com/google/go-querystring
+  version: 53e6ce116135b80d037921a7fdd5138cf32d7a8a
+  subpackages:
+  - query
+- name: github.com/hashicorp/hcl
+  version: 392dba7d905ed5d04a5794ba89f558b27e2ba1ca
+  subpackages:
+  - hcl/ast
+  - hcl/parser
+  - hcl/scanner
+  - hcl/strconv
+  - hcl/token
+  - json/parser
+  - json/scanner
+  - json/token
+- name: github.com/inconshreveable/mousetrap
+  version: 76626ae9c91c4f2a10f34cad8ce83ea42c93bb75
+- name: github.com/magiconair/properties
+  version: be5ece7dd465ab0765a9682137865547526d1dfb
+- name: github.com/mitchellh/mapstructure
+  version: d0303fe809921458f417bcf828397a65db30a7e4
+- name: github.com/pelletier/go-toml
+  version: 69d355db5304c0f7f809a2edc054553e7142f016
 - name: github.com/Sirupsen/logrus
   version: 202f25545ea4cf9b191ff7f846df5d87c9382c2b
+- name: github.com/spf13/afero
+  version: 9be650865eab0c12963d8753212f4f9c66cdcf12
+  subpackages:
+  - mem
+- name: github.com/spf13/cast
+  version: acbeb36b902d72a7a4c18e8f3241075e7ab763e4
 - name: github.com/spf13/cobra
-  version: 8c6fa02d2225de0f9bdcb7ca912556f68d172d8c
+  version: d994347edadc56d6a7f863775fb6887606685ae6
+- name: github.com/spf13/jwalterweatherman
+  version: 0efa5202c04663c757d84f90f5219c1250baf94f
+- name: github.com/spf13/pflag
+  version: e57e3eeb33f795204c1ca35f56c44f83227c6e66
 - name: github.com/spf13/viper
   version: c1de95864d73a5465492829d7cb2dd422b19ac96
+- name: github.com/trivago/tgo
+  version: 8a6fc6a04f07d8623086322a7b8d805ddf7263eb
+  subpackages:
+  - tcontainer
+  - treflect
+- name: golang.org/x/net
+  version: b3756b4b77d7b13260a0a2ec658753cf48922eac
+  subpackages:
+  - context
+  - context/ctxhttp
 - name: golang.org/x/oauth2
-  version: 3c3a985cb79f52a3190fbc056984415ca6763d01
+  version: cce311a261e6fcf29de72ca96827bdb0b7d9c9e6
+  subpackages:
+  - internal
+- name: golang.org/x/sys
+  version: 4cd6d1a821c7175768725b55ca82f14683a29ea4
+  subpackages:
+  - unix
+- name: golang.org/x/text
+  version: 836efe42bb4aa16aaa17b9c155d8813d336ed720
+  subpackages:
+  - transform
+  - unicode/norm
+- name: google.golang.org/appengine
+  version: ad2570cd3913654e00c5f0183b39d2f998e54046
+  subpackages:
+  - internal
+  - internal/app_identity
+  - internal/base
+  - internal/datastore
+  - internal/log
+  - internal/modules
+  - internal/remote_api
+  - internal/urlfetch
+  - urlfetch
+- name: gopkg.in/yaml.v2
+  version: 3b4ad1db5b2a649883ff3782f5f9f6fb52be71af
 testImports: []

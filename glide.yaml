@@ -8,3 +8,5 @@ import:
 - package: golang.org/x/oauth2
 - package: github.com/coreos/pkg
   version: v3
+- package: github.com/cenkalti/backoff
+  version: v1.0.0
