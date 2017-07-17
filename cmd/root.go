@@ -39,6 +39,8 @@ var (
 	isLastUpdateFieldID string    // The customfield ID of the Last Issue-Sync Update field in JIRA
 
 	project jira.Project
+
+	dryRun bool
 )
 
 const dateFormat = "2006-01-02T15:04:05-0700"
@@ -81,7 +83,7 @@ func GetGitHubClient(token string) (*github.Client, error) {
 		return nil, err
 	}
 
-	log.Debugln("Successfully connected to GitHub.")
+	log.Debug("Successfully connected to GitHub.")
 	return client, nil
 }
 
@@ -146,7 +148,11 @@ var RootCmd = &cobra.Command{
 			return err
 		}
 
-		return setLastUpdateTime()
+		if !dryRun {
+			return setLastUpdateTime()
+		} else {
+			return nil
+		}
 	},
 }
 
@@ -334,6 +340,8 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	return nil
 }
 
+var newlineReplaceRegex = regexp.MustCompile("\r?\n")
+
 func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
 	log.Debugf("Updating JIRA %s with GitHub #%d", jIssue.Key, *ghIssue.Number)
 
@@ -383,7 +391,9 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 		fields.Unknowns[key] = time.Now().Format(dateFormat)
 
 		fields.Type = jIssue.Fields.Type
-		fields.Summary = jIssue.Fields.Summary
+		if fields.Summary == "" {
+			fields.Summary = jIssue.Fields.Summary
+		}
 
 		issue := &jira.Issue{
 			Fields: &fields,
@@ -391,11 +401,36 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 			ID:     jIssue.ID,
 		}
 
-		issue, res, err := jClient.Issue.Update(issue)
+		if !dryRun {
+			_, res, err := jClient.Issue.Update(issue)
 
-		if err != nil {
-			log.Errorf("Error updating JIRA issue %s: %v", jIssue.Key, err)
-			return getErrorBody(res)
+			if err != nil {
+				log.Errorf("Error updating JIRA issue %s: %v", jIssue.Key, err)
+				return getErrorBody(res)
+			}
+		} else {
+			log.Info("")
+			log.Infof("Update JIRA issue %s with GitHub issue #%d:", jIssue.Key, ghIssue.GetNumber())
+			if fields.Summary != jIssue.Fields.Summary {
+				log.Infof("  Summary: %s", fields.Summary)
+			}
+			if fields.Description != "" {
+				fields.Description = newlineReplaceRegex.ReplaceAllString(fields.Description, "\\n")
+				if len(fields.Description) > 20 {
+					log.Infof("  Description: %s...", fields.Description[0:20])
+				} else {
+					log.Infof("  Description: %s", fields.Description)
+				}
+			}
+			key := fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+			if labels, err := fields.Unknowns.String(key); err == nil {
+				log.Infof("  Labels: %s", labels)
+			}
+			key = fmt.Sprintf("customfield_%s", ghStatusFieldID)
+			if state, err := fields.Unknowns.String(key); err == nil {
+				log.Infof("  State: %s", state)
+			}
+			log.Info("")
 		}
 
 		log.Debugf("Successfully updated JIRA issue %s!", jIssue.Key)
@@ -461,15 +496,40 @@ func createIssue(issue github.Issue, ghClient github.Client, jClient jira.Client
 		Fields: &fields,
 	}
 
-	jIssue, res, err := jClient.Issue.Create(jIssue)
-	if err != nil {
-		log.Errorf("Error creating JIRA issue: %v", err)
-		return getErrorBody(res)
+	if !dryRun {
+		var res *jira.Response
+		var err error
+		jIssue, res, err = jClient.Issue.Create(jIssue)
+		if err != nil {
+			log.Errorf("Error creating JIRA issue: %v", err)
+			return getErrorBody(res)
+		}
+	} else {
+		log.Info("")
+		log.Infof("Create JIRA issue for GitHub issue #%d:", issue.GetNumber())
+		log.Infof("  Summary: %s", fields.Summary)
+		if fields.Description == "" {
+			log.Infof("  Description: empty")
+		} else {
+			fields.Description = newlineReplaceRegex.ReplaceAllString(fields.Description, "\\n")
+			if len(fields.Description) <= 20 {
+				log.Infof("  Description: %s", fields.Description)
+			} else {
+				log.Infof("  Description: %s...", fields.Description[0:20])
+			}
+		}
+		key := fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+		log.Infof("  Labels: %s", fields.Unknowns[key])
+		key = fmt.Sprintf("customfield_%s", ghStatusFieldID)
+		log.Infof("  State: %s", fields.Unknowns[key])
+		key = fmt.Sprintf("customfield_%s", ghReporterFieldID)
+		log.Infof("  Reporter: %s", fields.Unknowns[key])
+		log.Info("")
 	}
 
 	log.Debugf("Created JIRA issue %s!", jIssue.Key)
 
-	if err = createComments(issue, *jIssue, nil, ghClient, jClient); err != nil {
+	if err := createComments(issue, *jIssue, nil, ghClient, jClient); err != nil {
 		return err
 	}
 
@@ -559,17 +619,32 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 		Body: body,
 	}
 
-	// TODO: Abstract this into its own method
-	req, err := jClient.NewRequest("PUT", fmt.Sprintf("rest/api/2/issue/%s/comment/%s", jIssue.Key, jComment.ID), request)
-	if err != nil {
-		log.Errorf("Error creating comment update request: %v", err)
-		return err
-	}
+	if !dryRun {
+		req, err := jClient.NewRequest("PUT", fmt.Sprintf("rest/api/2/issue/%s/comment/%s", jIssue.Key, jComment.ID), request)
+		if err != nil {
+			log.Errorf("Error creating comment update request: %v", err)
+			return err
+		}
 
-	res, err := jClient.Do(req, nil)
-	if err != nil {
-		log.Errorf("Error updating comment: %v", err)
-		return getErrorBody(res)
+		res, err := jClient.Do(req, nil)
+		if err != nil {
+			log.Errorf("Error updating comment: %v", err)
+			return getErrorBody(res)
+		}
+	} else {
+		log.Info("")
+		log.Infof("Update JIRA comment %s on issue %s:", jComment.ID, jIssue.Key)
+		if request.Body == "" {
+			log.Info("  Body: empty")
+		} else {
+			request.Body = newlineReplaceRegex.ReplaceAllString(request.Body, "\\n")
+			if len(request.Body) <= 150 {
+				log.Infof("  Body: %s", request.Body)
+			} else {
+				log.Infof("  Body: %s...", request.Body[0:150])
+			}
+		}
+		log.Info("")
 	}
 
 	return nil
@@ -596,10 +671,30 @@ func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient gi
 		Body: body,
 	}
 
-	jComment, res, err := jClient.Issue.AddComment(jIssue.ID, jComment)
-	if err != nil {
-		log.Errorf("Error creating JIRA comment on issue %s. Error: %v", jIssue.Key, err)
-		return getErrorBody(res)
+	if !dryRun {
+		_, res, err := jClient.Issue.AddComment(jIssue.ID, jComment)
+		if err != nil {
+			log.Errorf("Error creating JIRA comment on issue %s. Error: %v", jIssue.Key, err)
+			return getErrorBody(res)
+		}
+	} else {
+		log.Info("")
+		log.Infof("Create comment on JIRA issue %s:", jIssue.Key)
+		log.Infof("  GitHub Comment ID: %d", ghComment.GetID())
+		log.Infof("  GitHub user login: %s", ghComment.User.GetLogin())
+		log.Infof("  Github user name: %s", ghComment.User.GetName())
+		log.Infof("  Created date: %s", ghComment.GetCreatedAt().Format(commentDateFormat))
+		if ghComment.GetBody() == "" {
+			log.Info("  Body: empty")
+		} else {
+			body := newlineReplaceRegex.ReplaceAllString(ghComment.GetBody(), "\\n")
+			if len(body) <= 20 {
+				log.Infof("  Body: %s", body)
+			} else {
+				log.Infof("  Body: %s...", body[0:20])
+			}
+		}
+		log.Info("")
 	}
 
 	return nil
@@ -651,7 +746,7 @@ func init() {
 	RootCmd.PersistentFlags().StringP("jira-uri", "U", "", "Set the base uri of the JIRA instance")
 	RootCmd.PersistentFlags().StringP("jira-project", "P", "", "Set the key of the JIRA project")
 	RootCmd.PersistentFlags().StringP("since", "s", "1970-01-01T00:00:00+0000", "Set the day that the update should run forward from")
-
+	RootCmd.PersistentFlags().BoolVarP(&dryRun, "dry-run", "d", false, "Print out actions to be taken, but do not execute them")
 }
 
 func parseLogLevel(level string) logrus.Level {
