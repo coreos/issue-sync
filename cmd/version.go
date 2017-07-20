@@ -13,17 +13,19 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
-var Version = "0.1.0"
+var Version = "undefined"
 
 // versionCmd represents the version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Returns the current version of issue-sync",
 	Run: func(cmd *cobra.Command, args []string) {
-		log.Println("issue-sync version ", Version)
+		fmt.Println("issue-sync version ", Version)
 	},
 }
 
