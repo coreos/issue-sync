@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Sirupsen/logrus"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/go-github/github"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/oauth2"
 )
 
@@ -149,7 +151,12 @@ func validateConfig() error {
 
 	jPass := rootCmdCfg.GetString("jira-pass")
 	if jPass == "" {
-		return errors.New("Jira password required")
+		fmt.Print("Enter your JIRA password: ")
+		bytePass, err := terminal.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			return errors.New("Jira password required")
+		}
+		rootCmdCfg.Set("jira-pass", string(bytePass))
 	}
 
 	repo := rootCmdCfg.GetString("repo-name")
@@ -296,7 +303,7 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 			id, _ := jIssue.Fields.Unknowns.Int(fmt.Sprintf("customfield_%s", ghIDFieldID))
 			if int64(*ghIssue.ID) == id {
 				found = true
-				if err := updateIssue(*ghIssue, jIssue); err != nil {
+				if err := updateIssue(*ghIssue, jIssue, jiraClient); err != nil {
 					log.Errorf("Error updating issue %s. Error: %v", jIssue.Key, err)
 				}
 				break
@@ -439,7 +446,6 @@ type Config struct {
 	LogLevel    string `json:"log-level" mapstructure:"log-level"`
 	GithubToken string `json:"github-token" mapstructure:"github-token"`
 	JiraUser    string `json:"jira-user" mapstructure:"jira-user"`
-	JiraPass    string `json:"jira-pass" mapstructure:"jira-pass"`
 	RepoName    string `json:"repo-name" mapstructure:"repo-name"`
 	JiraUri     string `json:"jira-uri" mapstructure:"jira-uri"`
 	JiraProject string `json:"jira-project" mapstructure:"jira-project"`
