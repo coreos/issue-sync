@@ -2,62 +2,17 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
-	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/andygrunwald/go-jira"
-	"github.com/cenkalti/backoff"
-	"github.com/fsnotify/fsnotify"
+	"github.com/coreos/issue-sync/lib"
 	"github.com/google/go-github/github"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-	"golang.org/x/crypto/ssh/terminal"
-	"golang.org/x/oauth2"
-)
-
-var (
-	// log is a globally accessibly logrus logger.
-	log *logrus.Entry
-	// defaultLogLevel is the level logrus should default to if the configured option can't be parsed.
-	defaultLogLevel = logrus.InfoLevel
-	// rootCmdFile is the file viper loads the configuration from (default $HOME/.issue-sync.json).
-	rootCmdFile string
-	// rootCmdCfg is the configuration object; it merges command line options, config files, and defaults.
-	rootCmdCfg *viper.Viper
-
-	// since is the time we use to filter issues. Only GitHub issues updated after the `since` date
-	// will be requsted.
-	since time.Time
-	// ghIDFieldID is the customfield ID of the GitHub ID field in JIRA.
-	ghIDFieldID string
-	// ghNumFieldID is the customfield ID of the GitHub Number field in JIRA.
-	ghNumFieldID string
-	// ghlabelsFieldID is the customfield ID of the GitHub Labels field in JIRA.
-	ghLabelsFieldID string
-	// ghStatusFieldID is the customfield ID of the GitHub Status field in JIRA.
-	ghStatusFieldID string
-	// ghReporterFieldID is the customfield ID of the GitHub Reporter field in JIRA.
-	ghReporterFieldID string
-	// isLastUpdateFieldID is the customfield ID of the Last Issue-Sync Update field in JIRA.
-	isLastUpdateFieldID string
-
-	// project is the JIRA project set on the command line; it is a JIRA API object
-	// from which we can retrieve any data.
-	project jira.Project
-
-	// dryRun configures whether the application calls the create/update endpoints of the JIRA
-	// API or just prints out the actions it would take.
-	dryRun bool
 )
 
 // dateFormat is the format used for the `Last Issue-Sync Update` field.
@@ -68,151 +23,11 @@ const commentDateFormat = "15:04 PM, January 2 2006"
 
 // Execute provides a single function to run the root command and handle errors.
 func Execute() {
+	// Create a temporary logger that we can use if an error occurs before the real one is instantiated.
+	log := logrus.New()
 	if err := RootCmd.Execute(); err != nil {
 		log.Fatal(err)
 	}
-}
-
-// getErrorBody reads the HTTP response body of a JIRA API response,
-// logs it as an error, and returns an error object with the contents
-// of the body. If an error occurs during reading, that error is
-// instead printed and returned. This function closes the body for
-// further reading.
-func getErrorBody(res *jira.Response) error {
-	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		log.Errorf("Error occured trying to read error body: %v", err)
-		return err
-	}
-
-	log.Debugf("Error body: %s", body)
-	return errors.New(string(body))
-}
-
-// makeGHRequest takes an API function from the GitHub library
-// and calls it with exponential backoff. If the function succeeds, it
-// stores the value in the ret parameter, and returns the HTTP response
-// from the function, and a nil error. If it continues to fail until
-// a maximum time is reached, the ret parameter is returned as is, and a
-// nil HTTP response and a timeout error are returned.
-//
-// It is nearly identical to makeJIRARequest, but returns a GitHub API response.
-func makeGHRequest(f func() (interface{}, *github.Response, error)) (interface{}, *github.Response, error) {
-	var ret interface{}
-	var res *github.Response
-	var err error
-
-	op := func() error {
-		ret, res, err = f()
-		return err
-	}
-
-	b := backoff.NewExponentialBackOff()
-	b.MaxElapsedTime = rootCmdCfg.GetDuration("timeout")
-
-	er := backoff.Retry(op, b)
-	if er != nil {
-		return nil, nil, er
-	}
-
-	return ret, res, err
-}
-
-// makeJIRARequest takes an API function from the JIRA library
-// and calls it with exponential backoff. If the function succeeds, it
-// stores the value in the ret parameter, and returns the HTTP response
-// from the function, and a nil error. If it continues to fail until
-// a maximum time is reached, the ret parameter is returned as is, and a
-// nil HTTP response and a timeout error are returned.
-//
-// It is nearly identical to makeGHRequest, but returns a JIRA API response.
-func makeJIRARequest(f func() (interface{}, *jira.Response, error)) (interface{}, *jira.Response, error) {
-	var ret interface{}
-	var res *jira.Response
-	var err error
-
-	op := func() error {
-		ret, res, err = f()
-		return err
-	}
-
-	b := backoff.NewExponentialBackOff()
-	b.MaxElapsedTime = rootCmdCfg.GetDuration("timeout")
-
-	er := backoff.Retry(op, b)
-	if er != nil {
-		return nil, nil, er
-	}
-
-	return ret, res, err
-}
-
-// getGitHubClient initializes a GitHub API client with an OAuth client for authentication,
-// then makes an API request to confirm that the service is running and the auth token
-// is valid.
-func getGitHubClient(token string) (*github.Client, error) {
-	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-
-	client := github.NewClient(tc)
-
-	// Make a request so we can check that we can connect fine.
-	_, res, err := makeGHRequest(func() (interface{}, *github.Response, error) {
-		return client.RateLimits(ctx)
-	})
-	if err != nil {
-		log.Errorf("Error connecting to GitHub; check your token. Error: %v", err)
-		return nil, err
-	} else if err = github.CheckResponse(res.Response); err != nil {
-		log.Errorf("Error connecting to GitHub; check your token. Error: %v", err)
-		return nil, err
-	}
-
-	log.Debug("Successfully connected to GitHub.")
-	return client, nil
-}
-
-// getJIRAClient initializes a JIRA API client, then sets the Basic Auth credentials
-// passed to it. (OAuth token support is planned.) It then requests the project using
-// the key provided on the command line to have it accessible by future functions and
-// to check that the API is accessible and the auth credentials are valid.
-func getJIRAClient(username, password, baseURL string) (*jira.Client, error) {
-	client, err := jira.NewClient(nil, baseURL)
-	if err != nil {
-		log.Errorf("Error initializing JIRA client; check your base URI. Error: %v", err)
-		return nil, err
-	}
-	client.Authentication.SetBasicAuth(username, password)
-
-	log.Debug("JIRA client initialized; getting project")
-
-	proj, resp, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
-		return client.Project.Get(rootCmdCfg.GetString("jira-project"))
-	})
-	if err != nil {
-		log.Errorf("Unknown error using JIRA client. Error: %v", err)
-		return nil, err
-	} else if resp.StatusCode == 404 {
-		log.Errorf("Error retrieving JIRA project; check your key. Error: %v", err)
-		return nil, jira.CheckResponse(resp.Response)
-	} else if resp.StatusCode == 401 {
-		log.Errorf("Error connecting to JIRA; check your credentials. Error: %v", err)
-		return nil, jira.CheckResponse(resp.Response)
-	}
-
-	p, ok := proj.(*jira.Project)
-	if !ok {
-		log.Errorf("Get JIRA project did not return project! Value: %v", proj)
-		return nil, fmt.Errorf("Get project failed: expected *jira.Project; got %T", proj)
-	}
-	project = *p
-
-	log.Debug("Successfully connected to JIRA.")
-	return client, nil
 }
 
 // RootCmd represents the command itself and configures it.
@@ -220,195 +35,52 @@ var RootCmd = &cobra.Command{
 	Use:   "issue-sync [options]",
 	Short: "A tool to synchronize GitHub and JIRA issues",
 	Long:  "Full docs coming later; see https://github.com/coreos/issue-sync",
-	PreRun: func(cmd *cobra.Command, args []string) {
-		rootCmdCfg.BindPFlags(cmd.Flags())
-		log = newLogger("issue-sync", rootCmdCfg.GetString("log-level"))
-	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := validateConfig(); err != nil {
-			return err
-		}
-
-		ghClient, err := getGitHubClient(rootCmdCfg.GetString("github-token"))
-		if err != nil {
-			return err
-		}
-		jiraClient, err := getJIRAClient(
-			rootCmdCfg.GetString("jira-user"),
-			rootCmdCfg.GetString("jira-pass"),
-			rootCmdCfg.GetString("jira-uri"),
-		)
+		config, err := lib.NewConfig(cmd)
 		if err != nil {
 			return err
 		}
 
-		if err := getFieldIDs(*jiraClient); err != nil {
+		ghClient, err := lib.GetGitHubClient(config)
+		if err != nil {
+			return err
+		}
+		jiraClient, err := lib.GetJIRAClient(config)
+		if err != nil {
 			return err
 		}
 
-		if err := compareIssues(*ghClient, *jiraClient); err != nil {
+		if err := config.LoadJIRAConfig(*jiraClient); err != nil {
 			return err
 		}
 
-		if !dryRun {
-			return setLastUpdateTime()
+		if err := compareIssues(config, *ghClient, *jiraClient); err != nil {
+			return err
+		}
+
+		if !config.IsDryRun() {
+			return config.SaveConfig()
 		}
 
 		return nil
 	},
 }
 
-// validateConfig checks the values provided to all of the configuration
-// options, ensuring that e.g. `since` is a valid date, `jira-uri` is a
-// real URI, etc. This is the first level of checking. It does not confirm
-// if a JIRA server is running at `jira-uri` for example; that is checked
-// in getJIRAClient when we actually make a call to the API.
-func validateConfig() error {
-	// Log level and config file location are validated already
-
-	log.Debug("Checking config variables...")
-	token := rootCmdCfg.GetString("github-token")
-	if token == "" {
-		return errors.New("GitHub token required")
-	}
-
-	jUser := rootCmdCfg.GetString("jira-user")
-	if jUser == "" {
-		return errors.New("Jira username required")
-	}
-
-	jPass := rootCmdCfg.GetString("jira-pass")
-	if jPass == "" {
-		fmt.Print("Enter your JIRA password: ")
-		bytePass, err := terminal.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			return errors.New("Jira password required")
-		}
-		rootCmdCfg.Set("jira-pass", string(bytePass))
-	}
-
-	repo := rootCmdCfg.GetString("repo-name")
-	if repo == "" {
-		return errors.New("GitHub repository required")
-	}
-	if !strings.Contains(repo, "/") || len(strings.Split(repo, "/")) != 2 {
-		return errors.New("GitHub repository must be of form user/repo")
-	}
-
-	uri := rootCmdCfg.GetString("jira-uri")
-	if uri == "" {
-		return errors.New("JIRA URI required")
-	}
-	if _, err := url.ParseRequestURI(uri); err != nil {
-		return errors.New("JIRA URI must be valid URI")
-	}
-
-	project := rootCmdCfg.GetString("jira-project")
-	if project == "" {
-		return errors.New("JIRA project required")
-	}
-
-	sinceStr := rootCmdCfg.GetString("since")
-	if sinceStr == "" {
-		rootCmdCfg.Set("since", "1970-01-01T00:00:00+0000")
-	}
-	var err error
-	since, err = time.Parse(dateFormat, sinceStr)
-	if err != nil {
-		return errors.New("Since date must be in ISO-8601 format")
-	}
-	log.Debug("All config variables are valid!")
-
-	return nil
-}
-
-// JIRAField represents field metadata in JIRA. For an example of its
-// structure, make a request to `${jira-uri}/rest/api/2/field`.
-type JIRAField struct {
-	ID          string   `json:"id"`
-	Key         string   `json:"key"`
-	Name        string   `json:"name"`
-	Custom      bool     `json:"custom"`
-	Orderable   bool     `json:"orderable"`
-	Navigable   bool     `json:"navigable"`
-	Searchable  bool     `json:"searchable"`
-	ClauseNames []string `json:"clauseNames"`
-	Schema      struct {
-		Type     string `json:"type"`
-		System   string `json:"system,omitempty"`
-		Items    string `json:"items,omitempty"`
-		Custom   string `json:"custom,omitempty"`
-		CustomID int    `json:"customId,omitempty"`
-	} `json:"schema,omitempty"`
-}
-
-// getFieldIDs requests the metadata of every issue field in the JIRA
-// project and saves the IDs of the custom fields used by issue-sync.
-func getFieldIDs(client jira.Client) error {
-	log.Debug("Collecting field IDs.")
-	req, err := client.NewRequest("GET", "/rest/api/2/field", nil)
-	if err != nil {
-		return err
-	}
-	fields := new([]JIRAField)
-
-	_, _, err = makeJIRARequest(func() (interface{}, *jira.Response, error) {
-		res, err := client.Do(req, fields)
-		return nil, res, err
-	})
-	if err != nil {
-		return err
-	}
-
-	for _, field := range *fields {
-		switch field.Name {
-		case "GitHub ID":
-			ghIDFieldID = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Number":
-			ghNumFieldID = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Labels":
-			ghLabelsFieldID = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Status":
-			ghStatusFieldID = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Reporter":
-			ghReporterFieldID = fmt.Sprint(field.Schema.CustomID)
-		case "Last Issue-Sync Update":
-			isLastUpdateFieldID = fmt.Sprint(field.Schema.CustomID)
-		}
-	}
-
-	if ghIDFieldID == "" {
-		return errors.New("could not find ID of 'GitHub ID' custom field. Check that it is named correctly.")
-	} else if ghNumFieldID == "" {
-		return errors.New("could not find ID of 'GitHub Number' custom field. Check that it is named correctly.")
-	} else if ghLabelsFieldID == "" {
-		return errors.New("could not find ID of 'Github Labels' custom field. Check that it is named correctly.")
-	} else if ghStatusFieldID == "" {
-		return errors.New("could not find ID of 'Github Status' custom field. Check that it is named correctly.")
-	} else if ghReporterFieldID == "" {
-		return errors.New("could not find ID of 'Github Reporter' custom field. Check that it is named correctly.")
-	} else if isLastUpdateFieldID == "" {
-		return errors.New("could not find ID of 'Last Issue-Sync Update' custom field. Check that it is named correctly.")
-	}
-
-	log.Debug("All fields have been checked.")
-
-	return nil
-}
-
 // compareIssues gets the list of GitHub issues updated since the `since` date,
 // gets the list of JIRA issues which have GitHub ID custom fields in that list,
 // then matches each one. If a JIRA issue already exists for a given GitHub issue,
 // it updates the issue; if no JIRA issue already exists, it creates one.
-func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
+func compareIssues(config lib.Config, ghClient github.Client, jiraClient jira.Client) error {
+	log := config.GetLogger()
+
 	log.Debug("Collecting issues")
 	ctx := context.Background()
 
-	repo := strings.Split(rootCmdCfg.GetString("repo-name"), "/")
+	user, repo := config.GetRepo()
 
-	i, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
-		return ghClient.Issues.ListByRepo(ctx, repo[0], repo[1], &github.IssueListByRepoOptions{
-			Since: since,
+	i, _, err := lib.MakeGHRequest(config, func() (interface{}, *github.Response, error) {
+		return ghClient.Issues.ListByRepo(ctx, user, repo, &github.IssueListByRepoOptions{
+			Since: config.GetSinceParam(),
 			State: "all",
 			ListOptions: github.ListOptions{
 				PerPage: 100,
@@ -435,14 +107,14 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	}
 
 	jql := fmt.Sprintf("project='%s' AND cf[%s] in (%s)",
-		rootCmdCfg.GetString("jira-project"), ghIDFieldID, strings.Join(ids, ","))
+		config.GetProjectKey(), config.GetFieldID(lib.GitHubID), strings.Join(ids, ","))
 
-	ji, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+	ji, res, err := lib.MakeJIRARequest(config, func() (interface{}, *jira.Response, error) {
 		return jiraClient.Issue.Search(jql, nil)
 	})
 	if err != nil {
 		log.Errorf("Error retrieving JIRA issues: %v", err)
-		return getErrorBody(res)
+		return lib.GetErrorBody(config, res)
 	}
 	jiraIssues, ok := ji.([]jira.Issue)
 	if !ok {
@@ -455,17 +127,17 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	for _, ghIssue := range ghIssues {
 		found := false
 		for _, jIssue := range jiraIssues {
-			id, _ := jIssue.Fields.Unknowns.Int(fmt.Sprintf("customfield_%s", ghIDFieldID))
-			if int64(*ghIssue.ID) == id {
+			id, err := jIssue.Fields.Unknowns.Int(config.GetFieldKey(lib.GitHubID))
+			if err == nil && int64(*ghIssue.ID) == id {
 				found = true
-				if err := updateIssue(*ghIssue, jIssue, ghClient, jiraClient); err != nil {
+				if err := updateIssue(config, *ghIssue, jIssue, ghClient, jiraClient); err != nil {
 					log.Errorf("Error updating issue %s. Error: %v", jIssue.Key, err)
 				}
 				break
 			}
 		}
 		if !found {
-			if err := createIssue(*ghIssue, ghClient, jiraClient); err != nil {
+			if err := createIssue(config, *ghIssue, ghClient, jiraClient); err != nil {
 				log.Errorf("Error creating issue for #%d. Error: %v", *ghIssue.Number, err)
 			}
 		}
@@ -481,7 +153,9 @@ var newlineReplaceRegex = regexp.MustCompile("\r?\n")
 // updateIssue compares each field of a GitHub issue to a JIRA issue; if any of them
 // differ, the differing fields of the JIRA issue are updated to match the GitHub
 // issue.
-func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
+func updateIssue(config lib.Config, ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
+	log := config.GetLogger()
+
 	log.Debugf("Updating JIRA %s with GitHub #%d", jIssue.Key, *ghIssue.Number)
 
 	anyDifferent := false
@@ -499,14 +173,14 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 		fields.Description = *ghIssue.Body
 	}
 
-	key := fmt.Sprintf("customfield_%s", ghStatusFieldID)
+	key := config.GetFieldKey(lib.GitHubStatus)
 	field, err := jIssue.Fields.Unknowns.String(key)
 	if err != nil || *ghIssue.State != field {
 		anyDifferent = true
 		fields.Unknowns[key] = *ghIssue.State
 	}
 
-	key = fmt.Sprintf("customfield_%s", ghReporterFieldID)
+	key = config.GetFieldKey(lib.GitHubReporter)
 	field, err = jIssue.Fields.Unknowns.String(key)
 	if err != nil || *ghIssue.User.Login != field {
 		anyDifferent = true
@@ -518,7 +192,7 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 		labels[i] = *l.Name
 	}
 
-	key = fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+	key = config.GetFieldKey(lib.GitHubLabels)
 	field, err = jIssue.Fields.Unknowns.String(key)
 	if err != nil && strings.Join(labels, ",") != field {
 		anyDifferent = true
@@ -526,7 +200,7 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 	}
 
 	if anyDifferent {
-		key = fmt.Sprintf("customfield_%s", isLastUpdateFieldID)
+		key = config.GetFieldKey(lib.LastISUpdate)
 		fields.Unknowns[key] = time.Now().Format(dateFormat)
 
 		fields.Type = jIssue.Fields.Type
@@ -540,14 +214,14 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 			ID:     jIssue.ID,
 		}
 
-		if !dryRun {
-			_, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+		if !config.IsDryRun() {
+			_, res, err := lib.MakeJIRARequest(config, func() (interface{}, *jira.Response, error) {
 				return jClient.Issue.Update(issue)
 			})
 
 			if err != nil {
 				log.Errorf("Error updating JIRA issue %s: %v", jIssue.Key, err)
-				return getErrorBody(res)
+				return lib.GetErrorBody(config, res)
 			}
 		} else {
 			log.Info("")
@@ -563,11 +237,11 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 					log.Infof("  Description: %s", fields.Description)
 				}
 			}
-			key := fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+			key := config.GetFieldKey(lib.GitHubLabels)
 			if labels, err := fields.Unknowns.String(key); err == nil {
 				log.Infof("  Labels: %s", labels)
 			}
-			key = fmt.Sprintf("customfield_%s", ghStatusFieldID)
+			key = config.GetFieldKey(lib.GitHubStatus)
 			if state, err := fields.Unknowns.String(key); err == nil {
 				log.Infof("  State: %s", state)
 			}
@@ -579,7 +253,7 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 		log.Debugf("JIRA issue %s is already up to date!", jIssue.Key)
 	}
 
-	i, _, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+	i, _, err := lib.MakeJIRARequest(config, func() (interface{}, *jira.Response, error) {
 		return jClient.Issue.Get(jIssue.ID, nil)
 	})
 	if err != nil {
@@ -603,7 +277,7 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 		log.Debugf("JIRA issue %s has %d comments", jIssue.Key, len(comments))
 	}
 
-	if err = createComments(ghIssue, jIssue, comments, ghClient, jClient); err != nil {
+	if err = createComments(config, ghIssue, jIssue, comments, ghClient, jClient); err != nil {
 		return err
 	}
 
@@ -612,47 +286,49 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 
 // createIssue generates a JIRA issue from the various fields on the given GitHub issue then
 // sends it to the JIRA API.
-func createIssue(issue github.Issue, ghClient github.Client, jClient jira.Client) error {
+func createIssue(config lib.Config, issue github.Issue, ghClient github.Client, jClient jira.Client) error {
+	log := config.GetLogger()
+
 	log.Debugf("Creating JIRA issue based on GitHub issue #%d", *issue.Number)
 
 	fields := jira.IssueFields{
 		Type: jira.IssueType{
 			Name: "Task", // TODO: Determine issue type
 		},
-		Project:     project,
+		Project:     config.GetProject(),
 		Summary:     *issue.Title,
 		Description: *issue.Body,
 		Unknowns:    map[string]interface{}{},
 	}
 
-	key := fmt.Sprintf("customfield_%s", ghIDFieldID)
+	key := config.GetFieldKey(lib.GitHubID)
 	fields.Unknowns[key] = *issue.ID
-	key = fmt.Sprintf("customfield_%s", ghNumFieldID)
+	key = config.GetFieldKey(lib.GitHubNumber)
 	fields.Unknowns[key] = *issue.Number
-	key = fmt.Sprintf("customfield_%s", ghStatusFieldID)
+	key = config.GetFieldKey(lib.GitHubStatus)
 	fields.Unknowns[key] = *issue.State
-	key = fmt.Sprintf("customfield_%s", ghReporterFieldID)
+	key = config.GetFieldKey(lib.GitHubReporter)
 	fields.Unknowns[key] = issue.User.GetLogin()
-	key = fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+	key = config.GetFieldKey(lib.GitHubLabels)
 	strs := make([]string, len(issue.Labels))
 	for i, v := range issue.Labels {
 		strs[i] = *v.Name
 	}
 	fields.Unknowns[key] = strings.Join(strs, ",")
-	key = fmt.Sprintf("customfield_%s", isLastUpdateFieldID)
+	key = config.GetFieldKey(lib.LastISUpdate)
 	fields.Unknowns[key] = time.Now().Format(dateFormat)
 
 	jIssue := &jira.Issue{
 		Fields: &fields,
 	}
 
-	if !dryRun {
-		i, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+	if !config.IsDryRun() {
+		i, res, err := lib.MakeJIRARequest(config, func() (interface{}, *jira.Response, error) {
 			return jClient.Issue.Create(jIssue)
 		})
 		if err != nil {
 			log.Errorf("Error creating JIRA issue: %v", err)
-			return getErrorBody(res)
+			return lib.GetErrorBody(config, res)
 		}
 		var ok bool
 		jIssue, ok = i.(*jira.Issue)
@@ -674,18 +350,18 @@ func createIssue(issue github.Issue, ghClient github.Client, jClient jira.Client
 				log.Infof("  Description: %s...", fields.Description[0:20])
 			}
 		}
-		key := fmt.Sprintf("customfield_%s", ghLabelsFieldID)
+		key := config.GetFieldKey(lib.GitHubLabels)
 		log.Infof("  Labels: %s", fields.Unknowns[key])
-		key = fmt.Sprintf("customfield_%s", ghStatusFieldID)
+		key = config.GetFieldKey(lib.GitHubStatus)
 		log.Infof("  State: %s", fields.Unknowns[key])
-		key = fmt.Sprintf("customfield_%s", ghReporterFieldID)
+		key = config.GetFieldKey(lib.GitHubReporter)
 		log.Infof("  Reporter: %s", fields.Unknowns[key])
 		log.Info("")
 	}
 
 	log.Debugf("Created JIRA issue %s!", jIssue.Key)
 
-	if err := createComments(issue, *jIssue, nil, ghClient, jClient); err != nil {
+	if err := createComments(config, issue, *jIssue, nil, ghClient, jClient); err != nil {
 		return err
 	}
 
@@ -705,16 +381,18 @@ var jCommentIDRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\)")
 // createCommments takes a GitHub issue and retrieves all of its comments. It then
 // matches each one to a comment in `existing`. If it finds a match, it calls
 // updateComment; if it doesn't, it calls createComment.
-func createComments(ghIssue github.Issue, jIssue jira.Issue, existing []jira.Comment, ghClient github.Client, jClient jira.Client) error {
+func createComments(config lib.Config, ghIssue github.Issue, jIssue jira.Issue, existing []jira.Comment, ghClient github.Client, jClient jira.Client) error {
+	log := config.GetLogger()
+
 	if *ghIssue.Comments == 0 {
 		log.Debugf("Issue #%d has no comments, skipping.", *ghIssue.Number)
 		return nil
 	}
 
 	ctx := context.Background()
-	repo := strings.Split(rootCmdCfg.GetString("repo-name"), "/")
-	c, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
-		return ghClient.Issues.ListComments(ctx, repo[0], repo[1], *ghIssue.Number, &github.IssueListCommentsOptions{
+	user, repo := config.GetRepo()
+	c, _, err := lib.MakeGHRequest(config, func() (interface{}, *github.Response, error) {
+		return ghClient.Issues.ListComments(ctx, user, repo, *ghIssue.Number, &github.IssueListCommentsOptions{
 			Sort:      "created",
 			Direction: "asc",
 		})
@@ -743,14 +421,14 @@ func createComments(ghIssue github.Issue, jIssue jira.Issue, existing []jira.Com
 			}
 			found = true
 
-			updateComment(*ghComment, jComment, jIssue, ghClient, jClient)
+			updateComment(config, *ghComment, jComment, jIssue, ghClient, jClient)
 			break
 		}
 		if found {
 			continue
 		}
 
-		if err := createComment(*ghComment, jIssue, ghClient, jClient); err != nil {
+		if err := createComment(config, *ghComment, jIssue, ghClient, jClient); err != nil {
 			return err
 		}
 	}
@@ -761,7 +439,9 @@ func createComments(ghIssue github.Issue, jIssue jira.Issue, existing []jira.Com
 
 // updateComment compares the body of a GitHub comment with the body (minus header)
 // of the JIRA comment, and updates the JIRA comment if necessary.
-func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
+func updateComment(config lib.Config, ghComment github.IssueComment, jComment jira.Comment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
+	log := config.GetLogger()
+
 	// fields[0] is the whole body, 1 is the ID, 2 is the username, 3 is the real name (or "" if none)
 	// 4 is the date, and 5 is the real body
 	fields := jCommentRegex.FindStringSubmatch(jComment.Body)
@@ -770,7 +450,7 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 		return nil
 	}
 
-	u, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
+	u, _, err := lib.MakeGHRequest(config, func() (interface{}, *github.Response, error) {
 		return ghClient.Users.Get(context.Background(), *ghComment.User.Login)
 	})
 	if err != nil {
@@ -802,20 +482,20 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 		Body: body,
 	}
 
-	if !dryRun {
+	if !config.IsDryRun() {
 		req, err := jClient.NewRequest("PUT", fmt.Sprintf("rest/api/2/issue/%s/comment/%s", jIssue.Key, jComment.ID), request)
 		if err != nil {
 			log.Errorf("Error creating comment update request: %v", err)
 			return err
 		}
 
-		_, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+		_, res, err := lib.MakeJIRARequest(config, func() (interface{}, *jira.Response, error) {
 			res, err := jClient.Do(req, nil)
 			return nil, res, err
 		})
 		if err != nil {
 			log.Errorf("Error updating comment: %v", err)
-			return getErrorBody(res)
+			return lib.GetErrorBody(config, res)
 		}
 	} else {
 		log.Info("")
@@ -839,8 +519,10 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 // createComment uses the ID, poster username, poster name, created at time, and body
 // of a GitHub comment to generate the body of a JIRA comment, then creates it in the
 // API.
-func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
-	u, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
+func createComment(config lib.Config, ghComment github.IssueComment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
+	log := config.GetLogger()
+
+	u, _, err := lib.MakeGHRequest(config, func() (interface{}, *github.Response, error) {
 		return ghClient.Users.Get(context.Background(), *ghComment.User.Login)
 	})
 	if err != nil {
@@ -867,13 +549,13 @@ func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient gi
 		Body: body,
 	}
 
-	if !dryRun {
-		_, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+	if !config.IsDryRun() {
+		_, res, err := lib.MakeJIRARequest(config, func() (interface{}, *jira.Response, error) {
 			return jClient.Issue.AddComment(jIssue.ID, jComment)
 		})
 		if err != nil {
 			log.Errorf("Error creating JIRA comment on issue %s. Error: %v", jIssue.Key, err)
-			return getErrorBody(res)
+			return lib.GetErrorBody(config, res)
 		}
 	} else {
 		log.Info("")
@@ -898,50 +580,9 @@ func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient gi
 	return nil
 }
 
-// Config represents the structure of the JSON configuration file used by Viper.
-type Config struct {
-	LogLevel    string        `json:"log-level" mapstructure:"log-level"`
-	GithubToken string        `json:"github-token" mapstructure:"github-token"`
-	JiraUser    string        `json:"jira-user" mapstructure:"jira-user"`
-	RepoName    string        `json:"repo-name" mapstructure:"repo-name"`
-	JiraURI     string        `json:"jira-uri" mapstructure:"jira-uri"`
-	JiraProject string        `json:"jira-project" mapstructure:"jira-project"`
-	Since       string        `json:"since" mapstructure:"since"`
-	Timeout     time.Duration `json:"timeout" mapstructure:"timeout"`
-}
-
-// setLastUpdateTime sets the `since` date of the current configuration to the
-// present date, then serializes the configuration into JSON and saves it to
-// the currently used configuration file (default $HOME/.issue-sync.json)
-func setLastUpdateTime() error {
-	rootCmdCfg.Set("since", time.Now().Format(dateFormat))
-
-	var c Config
-	rootCmdCfg.Unmarshal(&c)
-
-	b, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(rootCmdCfg.ConfigFileUsed(), os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	f.WriteString(string(b))
-
-	return nil
-}
-
 func init() {
-	log = logrus.NewEntry(logrus.New())
-	cobra.OnInitialize(func() {
-		rootCmdCfg = newViper("issue-sync", rootCmdFile)
-	})
 	RootCmd.PersistentFlags().String("log-level", logrus.InfoLevel.String(), "Set the global log level")
-	RootCmd.PersistentFlags().StringVar(&rootCmdFile, "config", "", "Config file (default is $HOME/.issue-sync.yaml)")
+	RootCmd.PersistentFlags().String("config", "", "Config file (default is $HOME/.issue-sync.json)")
 	RootCmd.PersistentFlags().StringP("github-token", "t", "", "Set the API Token used to access the GitHub repo")
 	RootCmd.PersistentFlags().StringP("jira-user", "u", "", "Set the JIRA username to authenticate with")
 	RootCmd.PersistentFlags().StringP("jira-pass", "p", "", "Set the JIRA password to authenticate with")
@@ -949,72 +590,6 @@ func init() {
 	RootCmd.PersistentFlags().StringP("jira-uri", "U", "", "Set the base uri of the JIRA instance")
 	RootCmd.PersistentFlags().StringP("jira-project", "P", "", "Set the key of the JIRA project")
 	RootCmd.PersistentFlags().StringP("since", "s", "1970-01-01T00:00:00+0000", "Set the day that the update should run forward from")
-	RootCmd.PersistentFlags().BoolVarP(&dryRun, "dry-run", "d", false, "Print out actions to be taken, but do not execute them")
+	RootCmd.PersistentFlags().BoolP("dry-run", "d", false, "Print out actions to be taken, but do not execute them")
 	RootCmd.PersistentFlags().DurationP("timeout", "T", time.Minute, "Set the maximum timeout on all API calls")
-}
-
-// parseLogLevel is a helper function to parse the log level passed in the
-// configuration into a logrus Level, or to use the default log level set
-// above if the log level can't be parsed.
-func parseLogLevel(level string) logrus.Level {
-	if level == "" {
-		return defaultLogLevel
-	}
-
-	ll, err := logrus.ParseLevel(level)
-	if err != nil {
-		fmt.Printf("Failed to parse log level, using default. Error: %v\n", err)
-		return defaultLogLevel
-	}
-	return ll
-}
-
-// newViper generates a viper configuration object which
-// merges (in order from highest to lowest priority) the
-// command line options, configuration file options, and
-// default configuration values. This viper object becomes
-// the single source of truth for the app configuration.
-func newViper(appName, cfgFile string) *viper.Viper {
-	v := viper.New()
-
-	v.SetEnvPrefix(appName)
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	v.AutomaticEnv()
-
-	v.SetConfigName(fmt.Sprintf("config-%s", appName))
-	v.AddConfigPath(".")
-	if cfgFile != "" {
-		v.SetConfigFile(cfgFile)
-	}
-
-	if err := v.ReadInConfig(); err == nil {
-		log.WithField("file", v.ConfigFileUsed()).Infof("config file loaded")
-		v.WatchConfig()
-		v.OnConfigChange(func(e fsnotify.Event) {
-			log.WithField("file", e.Name).Info("config file changed")
-		})
-	} else {
-		if cfgFile != "" {
-			log.WithError(err).Warningf("Error reading config file: %v", cfgFile)
-		}
-	}
-
-	if log.Level == logrus.DebugLevel {
-		v.Debug()
-	}
-
-	return v
-}
-
-// newLogger uses the log level provided in the configuration
-// to create a new logrus logger and set fields on it to make
-// it easy to use.
-func newLogger(app, level string) *logrus.Entry {
-	logger := logrus.New()
-	logger.Level = parseLogLevel(level)
-	logEntry := logrus.NewEntry(logger).WithFields(logrus.Fields{
-		"app": app,
-	})
-	logEntry.WithField("log-level", logger.Level).Info("log level set")
-	return logEntry
 }
