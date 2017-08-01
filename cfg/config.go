@@ -1,9 +1,10 @@
-package lib
+package cfg
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"strings"
@@ -96,18 +97,20 @@ func NewConfig(cmd *cobra.Command) (Config, error) {
 // LoadJIRAConfig loads the JIRA configuration (project key,
 // custom field IDs) from a remote JIRA server.
 func (c *Config) LoadJIRAConfig(client jira.Client) error {
-	proj, res, err := MakeJIRARequest(*c, func() (interface{}, *jira.Response, error) {
-		return client.Project.Get(c.cmdConfig.GetString("jira-project"))
-	})
+	proj, res, err := client.Project.Get(c.cmdConfig.GetString("jira-project"))
 	if err != nil {
 		c.log.Errorf("Error retrieving JIRA project; check key and credentials. Error: %v", err)
-		return GetErrorBody(*c, res)
+		defer res.Body.Close()
+		body, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			c.log.Errorf("Error occured trying to read error body: %v", err)
+			return err
+		} else {
+			c.log.Debugf("Error body: %s", body)
+			return errors.New(string(body))
+		}
 	}
-	if _, ok := proj.(*jira.Project); !ok {
-		c.log.Errorf("Get JIRA project did not return project! Value: %v", proj)
-		return errors.New(fmt.Sprintf("Get project failed; expected *jira.Project; got %T", proj))
-	}
-	c.project = *(proj.(*jira.Project))
+	c.project = *proj
 
 	c.fieldIDs, err = c.getFieldIDs(client)
 	if err != nil {
@@ -295,7 +298,7 @@ func newLogger(app, level string) *logrus.Entry {
 // validateConfig checks the values provided to all of the configuration
 // options, ensuring that e.g. `since` is a valid date, `jira-uri` is a
 // real URI, etc. This is the first level of checking. It does not confirm
-// if a JIRA client is running at `jira-uri` for example; that is checked
+// if a JIRA cli is running at `jira-uri` for example; that is checked
 // in getJIRAClient when we actually make a call to the API.
 func (c Config) validateConfig() error {
 	// Log level and config file location are validated already
@@ -318,6 +321,7 @@ func (c Config) validateConfig() error {
 		if err != nil {
 			return errors.New("Jira password required")
 		}
+		fmt.Println()
 		c.cmdConfig.Set("jira-pass", string(bytePass))
 	}
 
@@ -388,10 +392,7 @@ func (c Config) getFieldIDs(client jira.Client) (fields, error) {
 	}
 	jFields := new([]jiraField)
 
-	_, _, err = MakeJIRARequest(c, func() (interface{}, *jira.Response, error) {
-		res, err := client.Do(req, jFields)
-		return nil, res, err
-	})
+	_, err = client.Do(req, jFields)
 	if err != nil {
 		return fields{}, err
 	}
