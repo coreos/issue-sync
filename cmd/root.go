@@ -26,33 +26,58 @@ import (
 )
 
 var (
-	log             *logrus.Entry
+	// log is a globally accessibly logrus logger.
+	log *logrus.Entry
+	// defaultLogLevel is the level logrus should default to if the configured option can't be parsed.
 	defaultLogLevel = logrus.InfoLevel
-	rootCmdFile     string
-	rootCmdCfg      *viper.Viper
+	// rootCmdFile is the file viper loads the configuration from (default $HOME/.issue-sync.json).
+	rootCmdFile string
+	// rootCmdCfg is the configuration object; it merges command line options, config files, and defaults.
+	rootCmdCfg *viper.Viper
 
-	since               time.Time // The earliest GitHub issue updates we want to retrieve
-	ghIDFieldID         string    // The customfield ID of the GitHub ID field in JIRA
-	ghNumFieldID        string    // The customfield ID of the GitHub Number field in JIRA
-	ghLabelsFieldID     string    // The customfield ID of the GitHub Labels field in JIRA
-	ghStatusFieldID     string    // The customfield ID of the GitHub Status field in JIRA
-	ghReporterFieldID   string    // The customfield ID of the GitHub Reporter field in JIRA
-	isLastUpdateFieldID string    // The customfield ID of the Last Issue-Sync Update field in JIRA
+	// since is the time we use to filter issues. Only GitHub issues updated after the `since` date
+	// will be requsted.
+	since time.Time
+	// ghIDFieldID is the customfield ID of the GitHub ID field in JIRA.
+	ghIDFieldID string
+	// ghNumFieldID is the customfield ID of the GitHub Number field in JIRA.
+	ghNumFieldID string
+	// ghlabelsFieldID is the customfield ID of the GitHub Labels field in JIRA.
+	ghLabelsFieldID string
+	// ghStatusFieldID is the customfield ID of the GitHub Status field in JIRA.
+	ghStatusFieldID string
+	// ghReporterFieldID is the customfield ID of the GitHub Reporter field in JIRA.
+	ghReporterFieldID string
+	// isLastUpdateFieldID is the customfield ID of the Last Issue-Sync Update field in JIRA.
+	isLastUpdateFieldID string
 
+	// project is the JIRA project set on the command line; it is a JIRA API object
+	// from which we can retrieve any data.
 	project jira.Project
 
+	// dryRun configures whether the application calls the create/update endpoints of the JIRA
+	// API or just prints out the actions it would take.
 	dryRun bool
 )
 
+// dateFormat is the format used for the `Last Issue-Sync Update` field.
 const dateFormat = "2006-01-02T15:04:05-0700"
+
+// commentDateFormat is the format used in the headers of JIRA comments.
 const commentDateFormat = "15:04 PM, January 2 2006"
 
+// Execute provides a single function to run the root command and handle errors.
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// getErrorBody reads the HTTP response body of a JIRA API response,
+// logs it as an error, and returns an error object with the contents
+// of the body. If an error occurs during reading, that error is
+// instead printed and returned. This function closes the body for
+// further reading.
 func getErrorBody(res *jira.Response) error {
 	defer res.Body.Close()
 	body, err := ioutil.ReadAll(res.Body)
@@ -123,7 +148,10 @@ func makeJIRARequest(f func() (interface{}, *jira.Response, error)) (interface{}
 	return ret, res, err
 }
 
-func GetGitHubClient(token string) (*github.Client, error) {
+// getGitHubClient initializes a GitHub API client with an OAuth client for authentication,
+// then makes an API request to confirm that the service is running and the auth token
+// is valid.
+func getGitHubClient(token string) (*github.Client, error) {
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: token},
@@ -148,7 +176,11 @@ func GetGitHubClient(token string) (*github.Client, error) {
 	return client, nil
 }
 
-func GetJIRAClient(username, password, baseURL string) (*jira.Client, error) {
+// getJIRAClient initializes a JIRA API client, then sets the Basic Auth credentials
+// passed to it. (OAuth token support is planned.) It then requests the project using
+// the key provided on the command line to have it accessible by future functions and
+// to check that the API is accessible and the auth credentials are valid.
+func getJIRAClient(username, password, baseURL string) (*jira.Client, error) {
 	client, err := jira.NewClient(nil, baseURL)
 	if err != nil {
 		log.Errorf("Error initializing JIRA client; check your base URI. Error: %v", err)
@@ -183,6 +215,7 @@ func GetJIRAClient(username, password, baseURL string) (*jira.Client, error) {
 	return client, nil
 }
 
+// RootCmd represents the command itself and configures it.
 var RootCmd = &cobra.Command{
 	Use:   "issue-sync [options]",
 	Short: "A tool to synchronize GitHub and JIRA issues",
@@ -196,11 +229,11 @@ var RootCmd = &cobra.Command{
 			return err
 		}
 
-		ghClient, err := GetGitHubClient(rootCmdCfg.GetString("github-token"))
+		ghClient, err := getGitHubClient(rootCmdCfg.GetString("github-token"))
 		if err != nil {
 			return err
 		}
-		jiraClient, err := GetJIRAClient(
+		jiraClient, err := getJIRAClient(
 			rootCmdCfg.GetString("jira-user"),
 			rootCmdCfg.GetString("jira-pass"),
 			rootCmdCfg.GetString("jira-uri"),
@@ -225,6 +258,11 @@ var RootCmd = &cobra.Command{
 	},
 }
 
+// validateConfig checks the values provided to all of the configuration
+// options, ensuring that e.g. `since` is a valid date, `jira-uri` is a
+// real URI, etc. This is the first level of checking. It does not confirm
+// if a JIRA server is running at `jira-uri` for example; that is checked
+// in getJIRAClient when we actually make a call to the API.
 func validateConfig() error {
 	// Log level and config file location are validated already
 
@@ -284,6 +322,8 @@ func validateConfig() error {
 	return nil
 }
 
+// JIRAField represents field metadata in JIRA. For an example of its
+// structure, make a request to `${jira-uri}/rest/api/2/field`.
 type JIRAField struct {
 	ID          string   `json:"id"`
 	Key         string   `json:"key"`
@@ -302,6 +342,8 @@ type JIRAField struct {
 	} `json:"schema,omitempty"`
 }
 
+// getFieldIDs requests the metadata of every issue field in the JIRA
+// project and saves the IDs of the custom fields used by issue-sync.
 func getFieldIDs(client jira.Client) error {
 	log.Debug("Collecting field IDs.")
 	req, err := client.NewRequest("GET", "/rest/api/2/field", nil)
@@ -354,6 +396,10 @@ func getFieldIDs(client jira.Client) error {
 	return nil
 }
 
+// compareIssues gets the list of GitHub issues updated since the `since` date,
+// gets the list of JIRA issues which have GitHub ID custom fields in that list,
+// then matches each one. If a JIRA issue already exists for a given GitHub issue,
+// it updates the issue; if no JIRA issue already exists, it creates one.
 func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	log.Debug("Collecting issues")
 	ctx := context.Background()
@@ -428,8 +474,13 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	return nil
 }
 
+// newlineReplaceRegex is a regex to match both "\r\n" and just "\n" newline styles,
+// in order to allow us to escape both sequences cleanly in the output of a dry run.
 var newlineReplaceRegex = regexp.MustCompile("\r?\n")
 
+// updateIssue compares each field of a GitHub issue to a JIRA issue; if any of them
+// differ, the differing fields of the JIRA issue are updated to match the GitHub
+// issue.
 func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
 	log.Debugf("Updating JIRA %s with GitHub #%d", jIssue.Key, *ghIssue.Number)
 
@@ -559,6 +610,8 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 	return nil
 }
 
+// createIssue generates a JIRA issue from the various fields on the given GitHub issue then
+// sends it to the JIRA API.
 func createIssue(issue github.Issue, ghClient github.Client, jClient jira.Client) error {
 	log.Debugf("Creating JIRA issue based on GitHub issue #%d", *issue.Number)
 
@@ -639,9 +692,19 @@ func createIssue(issue github.Issue, ghClient github.Client, jClient jira.Client
 	return nil
 }
 
+// jCommentRegex matches a generated JIRA comment. It has matching groups to retrieve the
+// GitHub Comment ID (\1), the GitHub username (\2), the GitHub real name (\3, if it exists),
+// the time the comment was posted (\3 or \4), and the body of the comment (\4 or \5).
 var jCommentRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\) from GitHub user (\\w+) \\((.+)\\)? at (.+):\\n\\n(.+)$")
+
+// jCommentIDRegex just matches the beginning of a generated JIRA comment. It's a smaller,
+// simpler, and more efficient regex, to quickly filter only generated comments and retrieve
+// just their GitHub ID for matching.
 var jCommentIDRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\)")
 
+// createCommments takes a GitHub issue and retrieves all of its comments. It then
+// matches each one to a comment in `existing`. If it finds a match, it calls
+// updateComment; if it doesn't, it calls createComment.
 func createComments(ghIssue github.Issue, jIssue jira.Issue, existing []jira.Comment, ghClient github.Client, jClient jira.Client) error {
 	if *ghIssue.Comments == 0 {
 		log.Debugf("Issue #%d has no comments, skipping.", *ghIssue.Number)
@@ -696,6 +759,8 @@ func createComments(ghIssue github.Issue, jIssue jira.Issue, existing []jira.Com
 	return nil
 }
 
+// updateComment compares the body of a GitHub comment with the body (minus header)
+// of the JIRA comment, and updates the JIRA comment if necessary.
 func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
 	// fields[0] is the whole body, 1 is the ID, 2 is the username, 3 is the real name (or "" if none)
 	// 4 is the date, and 5 is the real body
@@ -771,6 +836,9 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 	return nil
 }
 
+// createComment uses the ID, poster username, poster name, created at time, and body
+// of a GitHub comment to generate the body of a JIRA comment, then creates it in the
+// API.
 func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
 	u, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
 		return ghClient.Users.Get(context.Background(), *ghComment.User.Login)
@@ -830,6 +898,7 @@ func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient gi
 	return nil
 }
 
+// Config represents the structure of the JSON configuration file used by Viper.
 type Config struct {
 	LogLevel    string        `json:"log-level" mapstructure:"log-level"`
 	GithubToken string        `json:"github-token" mapstructure:"github-token"`
@@ -841,6 +910,9 @@ type Config struct {
 	Timeout     time.Duration `json:"timeout" mapstructure:"timeout"`
 }
 
+// setLastUpdateTime sets the `since` date of the current configuration to the
+// present date, then serializes the configuration into JSON and saves it to
+// the currently used configuration file (default $HOME/.issue-sync.json)
 func setLastUpdateTime() error {
 	rootCmdCfg.Set("since", time.Now().Format(dateFormat))
 
@@ -881,6 +953,9 @@ func init() {
 	RootCmd.PersistentFlags().DurationP("timeout", "T", time.Minute, "Set the maximum timeout on all API calls")
 }
 
+// parseLogLevel is a helper function to parse the log level passed in the
+// configuration into a logrus Level, or to use the default log level set
+// above if the log level can't be parsed.
 func parseLogLevel(level string) logrus.Level {
 	if level == "" {
 		return defaultLogLevel
@@ -894,6 +969,11 @@ func parseLogLevel(level string) logrus.Level {
 	return ll
 }
 
+// newViper generates a viper configuration object which
+// merges (in order from highest to lowest priority) the
+// command line options, configuration file options, and
+// default configuration values. This viper object becomes
+// the single source of truth for the app configuration.
 func newViper(appName, cfgFile string) *viper.Viper {
 	v := viper.New()
 
@@ -926,6 +1006,9 @@ func newViper(appName, cfgFile string) *viper.Viper {
 	return v
 }
 
+// newLogger uses the log level provided in the configuration
+// to create a new logrus logger and set fields on it to make
+// it easy to use.
 func newLogger(app, level string) *logrus.Entry {
 	logger := logrus.New()
 	logger.Level = parseLogLevel(level)
