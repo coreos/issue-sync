@@ -16,6 +16,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/andygrunwald/go-jira"
+	"github.com/cenkalti/backoff"
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/go-github/github"
 	"github.com/spf13/cobra"
@@ -58,10 +59,68 @@ func getErrorBody(res *jira.Response) error {
 	if err != nil {
 		log.Errorf("Error occured trying to read error body: %v", err)
 		return err
-	} else {
-		log.Debugf("Error body: %s", body)
-		return errors.New(string(body))
 	}
+
+	log.Debugf("Error body: %s", body)
+	return errors.New(string(body))
+}
+
+// makeGHRequest takes an API function from the GitHub library
+// and calls it with exponential backoff. If the function succeeds, it
+// stores the value in the ret parameter, and returns the HTTP response
+// from the function, and a nil error. If it continues to fail until
+// a maximum time is reached, the ret parameter is returned as is, and a
+// nil HTTP response and a timeout error are returned.
+//
+// It is nearly identical to makeJIRARequest, but returns a GitHub API response.
+func makeGHRequest(f func() (interface{}, *github.Response, error)) (interface{}, *github.Response, error) {
+	var ret interface{}
+	var res *github.Response
+	var err error
+
+	op := func() error {
+		ret, res, err = f()
+		return err
+	}
+
+	b := backoff.NewExponentialBackOff()
+	b.MaxElapsedTime = rootCmdCfg.GetDuration("timeout")
+
+	er := backoff.Retry(op, b)
+	if er != nil {
+		return nil, nil, er
+	}
+
+	return ret, res, err
+}
+
+// makeJIRARequest takes an API function from the JIRA library
+// and calls it with exponential backoff. If the function succeeds, it
+// stores the value in the ret parameter, and returns the HTTP response
+// from the function, and a nil error. If it continues to fail until
+// a maximum time is reached, the ret parameter is returned as is, and a
+// nil HTTP response and a timeout error are returned.
+//
+// It is nearly identical to makeGHRequest, but returns a JIRA API response.
+func makeJIRARequest(f func() (interface{}, *jira.Response, error)) (interface{}, *jira.Response, error) {
+	var ret interface{}
+	var res *jira.Response
+	var err error
+
+	op := func() error {
+		ret, res, err = f()
+		return err
+	}
+
+	b := backoff.NewExponentialBackOff()
+	b.MaxElapsedTime = rootCmdCfg.GetDuration("timeout")
+
+	er := backoff.Retry(op, b)
+	if er != nil {
+		return nil, nil, er
+	}
+
+	return ret, res, err
 }
 
 func GetGitHubClient(token string) (*github.Client, error) {
@@ -74,7 +133,9 @@ func GetGitHubClient(token string) (*github.Client, error) {
 	client := github.NewClient(tc)
 
 	// Make a request so we can check that we can connect fine.
-	_, res, err := client.RateLimits(ctx)
+	_, res, err := makeGHRequest(func() (interface{}, *github.Response, error) {
+		return client.RateLimits(ctx)
+	})
 	if err != nil {
 		log.Errorf("Error connecting to GitHub; check your token. Error: %v", err)
 		return nil, err
@@ -97,7 +158,9 @@ func GetJIRAClient(username, password, baseURL string) (*jira.Client, error) {
 
 	log.Debug("JIRA client initialized; getting project")
 
-	proj, resp, err := client.Project.Get(rootCmdCfg.GetString("jira-project"))
+	proj, resp, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+		return client.Project.Get(rootCmdCfg.GetString("jira-project"))
+	})
 	if err != nil {
 		log.Errorf("Unknown error using JIRA client. Error: %v", err)
 		return nil, err
@@ -108,7 +171,13 @@ func GetJIRAClient(username, password, baseURL string) (*jira.Client, error) {
 		log.Errorf("Error connecting to JIRA; check your credentials. Error: %v", err)
 		return nil, jira.CheckResponse(resp.Response)
 	}
-	project = *proj
+
+	p, ok := proj.(*jira.Project)
+	if !ok {
+		log.Errorf("Get JIRA project did not return project! Value: %v", proj)
+		return nil, fmt.Errorf("Get project failed: expected *jira.Project; got %T", proj)
+	}
+	project = *p
 
 	log.Debug("Successfully connected to JIRA.")
 	return client, nil
@@ -150,9 +219,9 @@ var RootCmd = &cobra.Command{
 
 		if !dryRun {
 			return setLastUpdateTime()
-		} else {
-			return nil
 		}
+
+		return nil
 	},
 }
 
@@ -241,7 +310,10 @@ func getFieldIDs(client jira.Client) error {
 	}
 	fields := new([]JIRAField)
 
-	_, err = client.Do(req, fields)
+	_, _, err = makeJIRARequest(func() (interface{}, *jira.Response, error) {
+		res, err := client.Do(req, fields)
+		return nil, res, err
+	})
 	if err != nil {
 		return err
 	}
@@ -264,17 +336,17 @@ func getFieldIDs(client jira.Client) error {
 	}
 
 	if ghIDFieldID == "" {
-		return errors.New("Could not find ID of 'GitHub ID' custom field. Check that it is named correctly.")
+		return errors.New("could not find ID of 'GitHub ID' custom field. Check that it is named correctly.")
 	} else if ghNumFieldID == "" {
-		return errors.New("Could not find ID of 'GitHub Number' custom field. Check that it is named correctly.")
+		return errors.New("could not find ID of 'GitHub Number' custom field. Check that it is named correctly.")
 	} else if ghLabelsFieldID == "" {
-		return errors.New("Could not find ID of 'Github Labels' custom field. Check that it is named correctly.")
+		return errors.New("could not find ID of 'Github Labels' custom field. Check that it is named correctly.")
 	} else if ghStatusFieldID == "" {
-		return errors.New("Could not find ID of 'Github Status' custom field. Check that it is named correctly.")
+		return errors.New("could not find ID of 'Github Status' custom field. Check that it is named correctly.")
 	} else if ghReporterFieldID == "" {
-		return errors.New("Could not find ID of 'Github Reporter' custom field. Check that it is named correctly.")
+		return errors.New("could not find ID of 'Github Reporter' custom field. Check that it is named correctly.")
 	} else if isLastUpdateFieldID == "" {
-		return errors.New("Could not find ID of 'Last Issue-Sync Update' custom field. Check that it is named correctly.")
+		return errors.New("could not find ID of 'Last Issue-Sync Update' custom field. Check that it is named correctly.")
 	}
 
 	log.Debug("All fields have been checked.")
@@ -288,14 +360,22 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 
 	repo := strings.Split(rootCmdCfg.GetString("repo-name"), "/")
 
-	ghIssues, _, err := ghClient.Issues.ListByRepo(ctx, repo[0], repo[1], &github.IssueListByRepoOptions{
-		Since: since,
-		ListOptions: github.ListOptions{
-			PerPage: 100,
-		},
+	i, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
+		return ghClient.Issues.ListByRepo(ctx, repo[0], repo[1], &github.IssueListByRepoOptions{
+			Since: since,
+			State: "all",
+			ListOptions: github.ListOptions{
+				PerPage: 100,
+			},
+		})
 	})
 	if err != nil {
 		return err
+	}
+	ghIssues, ok := i.([]*github.Issue)
+	if !ok {
+		log.Errorf("Get GitHub issues did not return issues! Got: %v", i)
+		return fmt.Errorf("get GitHub issues failed: expected []*github.Issue; got %T", i)
 	}
 	if len(ghIssues) == 0 {
 		log.Info("There are no GitHub issues; exiting")
@@ -311,9 +391,17 @@ func compareIssues(ghClient github.Client, jiraClient jira.Client) error {
 	jql := fmt.Sprintf("project='%s' AND cf[%s] in (%s)",
 		rootCmdCfg.GetString("jira-project"), ghIDFieldID, strings.Join(ids, ","))
 
-	jiraIssues, _, err := jiraClient.Issue.Search(jql, nil)
+	ji, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+		return jiraClient.Issue.Search(jql, nil)
+	})
 	if err != nil {
-		return err
+		log.Errorf("Error retrieving JIRA issues: %v", err)
+		return getErrorBody(res)
+	}
+	jiraIssues, ok := ji.([]jira.Issue)
+	if !ok {
+		log.Errorf("Get JIRA issues did not return issues! Got: %v", ji)
+		return fmt.Errorf("get JIRA issues failed: expected []jira.Issue; got %T", ji)
 	}
 
 	log.Debug("Collected all JIRA issues")
@@ -402,7 +490,9 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 		}
 
 		if !dryRun {
-			_, res, err := jClient.Issue.Update(issue)
+			_, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+				return jClient.Issue.Update(issue)
+			})
 
 			if err != nil {
 				log.Errorf("Error updating JIRA issue %s: %v", jIssue.Key, err)
@@ -438,9 +528,16 @@ func updateIssue(ghIssue github.Issue, jIssue jira.Issue, ghClient github.Client
 		log.Debugf("JIRA issue %s is already up to date!", jIssue.Key)
 	}
 
-	issue, _, err := jClient.Issue.Get(jIssue.ID, nil)
+	i, _, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+		return jClient.Issue.Get(jIssue.ID, nil)
+	})
 	if err != nil {
 		log.Errorf("Error retrieving JIRA issue %s to get comments.", jIssue.Key)
+	}
+	issue, ok := i.(*jira.Issue)
+	if !ok {
+		log.Errorf("Get JIRA issue did not return issue! Got: %v", i)
+		return fmt.Errorf("get JIRA issue failed: expected *jira.Issue; got %T", i)
 	}
 
 	var comments []jira.Comment
@@ -497,12 +594,18 @@ func createIssue(issue github.Issue, ghClient github.Client, jClient jira.Client
 	}
 
 	if !dryRun {
-		var res *jira.Response
-		var err error
-		jIssue, res, err = jClient.Issue.Create(jIssue)
+		i, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+			return jClient.Issue.Create(jIssue)
+		})
 		if err != nil {
 			log.Errorf("Error creating JIRA issue: %v", err)
 			return getErrorBody(res)
+		}
+		var ok bool
+		jIssue, ok = i.(*jira.Issue)
+		if !ok {
+			log.Errorf("Create JIRA issue did not return issue! Got: %v", i)
+			return fmt.Errorf("create JIRA issue failed: expected *jira.Issue; got %T", i)
 		}
 	} else {
 		log.Info("")
@@ -547,13 +650,20 @@ func createComments(ghIssue github.Issue, jIssue jira.Issue, existing []jira.Com
 
 	ctx := context.Background()
 	repo := strings.Split(rootCmdCfg.GetString("repo-name"), "/")
-	comments, _, err := ghClient.Issues.ListComments(ctx, repo[0], repo[1], *ghIssue.Number, &github.IssueListCommentsOptions{
-		Sort:      "created",
-		Direction: "asc",
+	c, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
+		return ghClient.Issues.ListComments(ctx, repo[0], repo[1], *ghIssue.Number, &github.IssueListCommentsOptions{
+			Sort:      "created",
+			Direction: "asc",
+		})
 	})
 	if err != nil {
 		log.Errorf("Error retrieving GitHub comments for issue #%d. Error: %v.", *ghIssue.Number, err)
 		return err
+	}
+	comments, ok := c.([]*github.IssueComment)
+	if !ok {
+		log.Errorf("Get GitHub comments did not return comments! Got: %v", c)
+		return fmt.Errorf("Get GitHub comments failed: expected []*github.IssueComment; got %T", c)
 	}
 
 	for _, ghComment := range comments {
@@ -595,10 +705,18 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 		return nil
 	}
 
-	user, _, err := ghClient.Users.Get(context.Background(), *ghComment.User.Login)
+	u, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
+		return ghClient.Users.Get(context.Background(), *ghComment.User.Login)
+	})
 	if err != nil {
-		log.Errorf("Error retrieving GitHub user %s. Error: %v", *ghComment.User.Login, err)
+		log.Errorf("Error retrieving GitHub user %s: %v", *ghComment.User.Login, err)
 	}
+	user, ok := u.(*github.User)
+	if !ok {
+		log.Errorf("Get GitHub user did not return user! Got: %v", u)
+		return fmt.Errorf("get GitHub user failed: expected *github.User; got %T", u)
+	}
+
 	body := fmt.Sprintf("Comment (ID %d) from GitHub user %s", *ghComment.ID, user.GetLogin())
 	if user.GetName() != "" {
 		body = fmt.Sprintf("%s (%s)", body, user.GetName())
@@ -626,7 +744,10 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 			return err
 		}
 
-		res, err := jClient.Do(req, nil)
+		_, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+			res, err := jClient.Do(req, nil)
+			return nil, res, err
+		})
 		if err != nil {
 			log.Errorf("Error updating comment: %v", err)
 			return getErrorBody(res)
@@ -651,10 +772,17 @@ func updateComment(ghComment github.IssueComment, jComment jira.Comment, jIssue 
 }
 
 func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient github.Client, jClient jira.Client) error {
-	user, _, err := ghClient.Users.Get(context.Background(), *ghComment.User.Login)
+	u, _, err := makeGHRequest(func() (interface{}, *github.Response, error) {
+		return ghClient.Users.Get(context.Background(), *ghComment.User.Login)
+	})
 	if err != nil {
 		log.Errorf("Error retrieving GitHub user %s. Error: %v", *ghComment.User.Login, err)
 		return err
+	}
+	user, ok := u.(*github.User)
+	if !ok {
+		log.Errorf("Get GitHub user did not return user! Got: %v", u)
+		return fmt.Errorf("Get GitHub user failed: expected *github.User; got %T", u)
 	}
 
 	body := fmt.Sprintf("Comment (ID %d) from GitHub user %s", *ghComment.ID, user.GetLogin())
@@ -672,7 +800,9 @@ func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient gi
 	}
 
 	if !dryRun {
-		_, res, err := jClient.Issue.AddComment(jIssue.ID, jComment)
+		_, res, err := makeJIRARequest(func() (interface{}, *jira.Response, error) {
+			return jClient.Issue.AddComment(jIssue.ID, jComment)
+		})
 		if err != nil {
 			log.Errorf("Error creating JIRA comment on issue %s. Error: %v", jIssue.Key, err)
 			return getErrorBody(res)
@@ -701,13 +831,14 @@ func createComment(ghComment github.IssueComment, jIssue jira.Issue, ghClient gi
 }
 
 type Config struct {
-	LogLevel    string `json:"log-level" mapstructure:"log-level"`
-	GithubToken string `json:"github-token" mapstructure:"github-token"`
-	JiraUser    string `json:"jira-user" mapstructure:"jira-user"`
-	RepoName    string `json:"repo-name" mapstructure:"repo-name"`
-	JiraUri     string `json:"jira-uri" mapstructure:"jira-uri"`
-	JiraProject string `json:"jira-project" mapstructure:"jira-project"`
-	Since       string `json:"since" mapstructure:"since"`
+	LogLevel    string        `json:"log-level" mapstructure:"log-level"`
+	GithubToken string        `json:"github-token" mapstructure:"github-token"`
+	JiraUser    string        `json:"jira-user" mapstructure:"jira-user"`
+	RepoName    string        `json:"repo-name" mapstructure:"repo-name"`
+	JiraURI     string        `json:"jira-uri" mapstructure:"jira-uri"`
+	JiraProject string        `json:"jira-project" mapstructure:"jira-project"`
+	Since       string        `json:"since" mapstructure:"since"`
+	Timeout     time.Duration `json:"timeout" mapstructure:"timeout"`
 }
 
 func setLastUpdateTime() error {
@@ -747,6 +878,7 @@ func init() {
 	RootCmd.PersistentFlags().StringP("jira-project", "P", "", "Set the key of the JIRA project")
 	RootCmd.PersistentFlags().StringP("since", "s", "1970-01-01T00:00:00+0000", "Set the day that the update should run forward from")
 	RootCmd.PersistentFlags().BoolVarP(&dryRun, "dry-run", "d", false, "Print out actions to be taken, but do not execute them")
+	RootCmd.PersistentFlags().DurationP("timeout", "T", time.Minute, "Set the maximum timeout on all API calls")
 }
 
 func parseLogLevel(level string) logrus.Level {
