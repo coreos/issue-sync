@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/andygrunwald/go-jira"
 	"github.com/coreos/issue-sync/cfg"
 	"github.com/coreos/issue-sync/lib"
 	"github.com/coreos/issue-sync/lib/clients"
@@ -30,17 +31,28 @@ var RootCmd = &cobra.Command{
 			return err
 		}
 
-		ghClient, err := clients.NewGitHubClient(config)
+		// Create a temporary JIRA client which we can use to populate the
+		// configuration object with all of the JIRA settings (projects,
+		// field IDs, etc.)
+		rootJCli, err := clients.NewJIRAClient(config, jira.Project{})
 		if err != nil {
 			return err
 		}
-		jiraClient, err := clients.NewJIRAClient(&config)
-		if err != nil {
-			return err
-		}
+		config.LoadJIRAConfig(rootJCli.GetClient())
 
-		if err := lib.CompareIssues(config, ghClient, jiraClient); err != nil {
-			return err
+		for _, repo := range config.GetRepoList() {
+			ghClient, err := clients.NewGitHubClient(config, repo)
+			if err != nil {
+				return err
+			}
+			jiraClient, err := clients.NewJIRAClient(config, config.GetProject(repo))
+			if err != nil {
+				return err
+			}
+
+			if err := lib.CompareIssues(config, ghClient, jiraClient); err != nil {
+				return err
+			}
 		}
 
 		if !config.IsDryRun() {
