@@ -18,6 +18,8 @@ type GitHubClient interface {
 	ListComments(issue github.Issue) ([]*github.IssueComment, error)
 	GetUser(login string) (github.User, error)
 	GetRateLimits() (github.RateLimits, error)
+	GetRepo() string
+	GetRepoSplit() (string, string)
 }
 
 // realGHClient is a standard GitHub clients, that actually makes all of the
@@ -26,6 +28,7 @@ type GitHubClient interface {
 type realGHClient struct {
 	config cfg.Config
 	client github.Client
+	repo string
 }
 
 // ListIssues returns the list of GitHub issues since the last run of the tool.
@@ -34,7 +37,7 @@ func (g realGHClient) ListIssues() ([]*github.Issue, error) {
 
 	ctx := context.Background()
 
-	user, repo := g.config.GetRepo()
+	user, repo := g.GetRepoSplit()
 
 	i, _, err := g.request(func() (interface{}, *github.Response, error) {
 		return g.client.Issues.ListByRepo(ctx, user, repo, &github.IssueListByRepoOptions{
@@ -65,7 +68,7 @@ func (g realGHClient) ListComments(issue github.Issue) ([]*github.IssueComment, 
 	log := g.config.GetLogger()
 
 	ctx := context.Background()
-	user, repo := g.config.GetRepo()
+	user, repo := g.GetRepoSplit()
 	c, _, err := g.request(func() (interface{}, *github.Response, error) {
 		return g.client.Issues.ListComments(ctx, user, repo, issue.GetNumber(), &github.IssueListCommentsOptions{
 			Sort:      "created",
@@ -129,6 +132,18 @@ func (g realGHClient) GetRateLimits() (github.RateLimits, error) {
 	return *rate, nil
 }
 
+// GetRepo returns the user/repo form name of the GitHub repository the client
+// has been configured with.
+func (g realGHClient) GetRepo() string {
+	return g.repo
+}
+
+// GetRepoSplit returns the username and repo name of the GitHub repository
+// the client has been configured with.
+func (g realGHClient) GetRepoSplit() (string, string) {
+	return g.config.GetRepo(g.repo)
+}
+
 // request takes an API function from the GitHub library
 // and calls it with exponential backoff. If the function succeeds, it
 // returns the expected value and the GitHub API response, as well as a nil
@@ -160,7 +175,7 @@ func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (
 // run. For example, a dry-run clients may be created which does
 // not make any requests that would change anything on the server,
 // but instead simply prints out the actions that it's asked to take.
-func NewGitHubClient(config cfg.Config) (GitHubClient, error) {
+func NewGitHubClient(config cfg.Config, repo string) (GitHubClient, error) {
 	var ret GitHubClient
 
 	log := config.GetLogger()
@@ -176,6 +191,7 @@ func NewGitHubClient(config cfg.Config) (GitHubClient, error) {
 	ret = realGHClient{
 		config: config,
 		client: *client,
+		repo: repo,
 	}
 
 	// Make a request so we can check that we can connect fine.

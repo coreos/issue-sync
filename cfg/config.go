@@ -48,6 +48,12 @@ type fields struct {
 	lastUpdate     string
 }
 
+// Project represents the project configuration as it exists in the configuration file.
+type Project struct {
+	Repo string `json:"repo" mapstructure:"repo"`
+	Key  string `json:"key" mapstructure:"key"`
+}
+
 // Config is the root configuration object the application creates.
 type Config struct {
 	// cmdFile is the file Viper is using for its configuration (default $HOME/.issue-sync.json).
@@ -64,8 +70,8 @@ type Config struct {
 	// fieldIDs is the list of custom fields we pulled from the `fields` JIRA endpoint.
 	fieldIDs fields
 
-	// project represents the JIRA project the user has requested.
-	project jira.Project
+	// projects represents the mapping from the GitHub repos to JIRA projects the user configured.
+	projects map[string]jira.Project
 
 	// since is the parsed value of the `since` configuration parameter, which is the earliest that
 	// a GitHub issue can have been updated to be retrieved.
@@ -101,21 +107,27 @@ func NewConfig(cmd *cobra.Command) (Config, error) {
 // LoadJIRAConfig loads the JIRA configuration (project key,
 // custom field IDs) from a remote JIRA server.
 func (c *Config) LoadJIRAConfig(client jira.Client) error {
-	proj, res, err := client.Project.Get(c.cmdConfig.GetString("jira-project"))
-	if err != nil {
-		c.log.Errorf("Error retrieving JIRA project; check key and credentials. Error: %v", err)
-		defer res.Body.Close()
-		body, err := ioutil.ReadAll(res.Body)
+	var projects []Project
+
+	c.cmdConfig.UnmarshalKey("projects", &projects)
+
+	for _, project := range projects {
+		proj, res, err := client.Project.Get(project.Key)
 		if err != nil {
-			c.log.Errorf("Error occured trying to read error body: %v", err)
-			return err
+			c.log.Errorf("Error retrieving JIRA project; check key and credentials. Error: %v", err)
+			defer res.Body.Close()
+			body, err := ioutil.ReadAll(res.Body)
+			if err != nil {
+				c.log.Errorf("Error occured trying to read error body: %v", err)
+				return err
+			}
+			c.log.Debugf("Error body: %s", body)
+			return errors.New(string(body))
 		}
-
-		c.log.Debugf("Error body: %s", body)
-		return errors.New(string(body))
+		c.projects[project.Repo] = *proj
 	}
-	c.project = *proj
 
+	var err error
 	c.fieldIDs, err = c.getFieldIDs(client)
 	if err != nil {
 		return err
@@ -185,20 +197,38 @@ func (c Config) GetFieldKey(key fieldKey) string {
 	return fmt.Sprintf("customfield_%s", c.GetFieldID(key))
 }
 
-// GetProject returns the JIRA project the user has configured.
-func (c Config) GetProject() jira.Project {
-	return c.project
+// GetProjects returns the map of GitHub repos and JIRA projects, which is useful
+// for iterating with.
+func (c Config) GetProjects() map[string]jira.Project {
+	return c.projects
 }
 
-// GetProjectKey returns the JIRA key of the configured project.
-func (c Config) GetProjectKey() string {
-	return c.project.Key
+// GetProject returns the JIRA project for a GitHub repo.
+func (c Config) GetProject(repo string) jira.Project {
+	return c.projects[repo]
 }
 
-// GetRepo returns the user/org name and the repo name of the configured GitHub repository.
-func (c Config) GetRepo() (string, string) {
-	fullName := c.cmdConfig.GetString("repo-name")
-	parts := strings.Split(fullName, "/")
+// GetProjectKey returns the JIRA key of the project for a GitHub repo.
+func (c Config) GetProjectKey(repo string) string {
+	return c.projects[repo].Key
+}
+
+// GetRepoList returns the list of GitHub repo names provided.
+func (c Config) GetRepoList() []string {
+	keys := make([]string, len(c.projects))
+
+	i := 0
+	for k := range c.projects {
+		keys[i] = k
+		i++
+	}
+
+	return keys
+}
+
+// GetRepo returns the user/org name and the repo name of the given GitHub repository.
+func (c Config) GetRepo(repo string) (string, string) {
+	parts := strings.Split(repo, "/")
 	// We check that repo-name is two parts separated by a slash in NewConfig, so this is safe
 	return parts[0], parts[1]
 }
@@ -222,6 +252,7 @@ type configFile struct {
 	RepoName    string        `json:"repo-name" mapstructure:"repo-name"`
 	JIRAURI     string        `json:"jira-uri" mapstructure:"jira-uri"`
 	JIRAProject string        `json:"jira-project" mapstructure:"jira-project"`
+	Projects    []jira.Project `json:"projects" mapstructure:"projects"`
 	Since       string        `json:"since" mapstructure:"since"`
 	Timeout     time.Duration `json:"timeout" mapstructure:"timeout"`
 }
@@ -380,14 +411,6 @@ func (c *Config) validateConfig() error {
 		}
 	}
 
-	repo := c.cmdConfig.GetString("repo-name")
-	if repo == "" {
-		return errors.New("GitHub repository required")
-	}
-	if !strings.Contains(repo, "/") || len(strings.Split(repo, "/")) != 2 {
-		return errors.New("GitHub repository must be of form user/repo")
-	}
-
 	uri := c.cmdConfig.GetString("jira-uri")
 	if uri == "" {
 		return errors.New("JIRA URI required")
@@ -396,9 +419,49 @@ func (c *Config) validateConfig() error {
 		return errors.New("JIRA URI must be valid URI")
 	}
 
-	project := c.cmdConfig.GetString("jira-project")
-	if project == "" {
-		return errors.New("JIRA project required")
+	if c.cmdConfig.GetString("jira-project") != "" || c.cmdConfig.GetString("repo-name") != "" {
+		c.log.Debug("Using provided project and repo")
+
+		repo := c.cmdConfig.GetString("repo-name")
+		if repo == "" {
+			return errors.New("GitHub repository required")
+		}
+		if !strings.Contains(repo, "/") || len(strings.Split(repo, "/")) != 2 {
+			return errors.New("GitHub repository must be of form user/repo")
+		}
+
+		project := c.cmdConfig.GetString("jira-project")
+		if project == "" {
+			return errors.New("JIRA project required")
+		}
+
+		projects := make([]Project, 1)
+		projects[0] = Project{
+			Repo: repo,
+			Key: project,
+		}
+
+		c.cmdConfig.Set("projects", projects)
+		c.cmdConfig.Set("repo-name", "")
+		c.cmdConfig.Set("jira-project", "")
+	} else {
+		c.log.Debug("Using project list from configuration file")
+
+		var projects []Project
+
+		c.cmdConfig.UnmarshalKey("projects", &projects)
+
+		for i, project := range projects {
+			if project.Repo == "" {
+				return fmt.Errorf("project number %d is missing a repo", i)
+			}
+			if !strings.Contains(project.Repo, "/") || len(strings.Split(project.Repo, "/")) != 2 {
+				return fmt.Errorf("project number %d has bad repo; must be user/repo or org/repo", i)
+			}
+			if project.Key == "" {
+				return fmt.Errorf("project number %d is missing JIRA project key", i)
+			}
+		}
 	}
 
 	sinceStr := c.cmdConfig.GetString("since")

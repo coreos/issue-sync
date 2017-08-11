@@ -154,8 +154,6 @@ func UpdateIssue(config cfg.Config, ghIssue github.Issue, jIssue jira.Issue, ghC
 		log.Debugf("JIRA issue %s is already up to date!", jIssue.Key)
 	}
 
-
-
 	if err := CompareComments(config, ghIssue, issue, ghClient, jClient); err != nil {
 		return err
 	}
@@ -174,7 +172,7 @@ func CreateIssue(config cfg.Config, issue github.Issue, ghClient clients.GitHubC
 		Type: jira.IssueType{
 			Name: "Task", // TODO: Determine issue type
 		},
-		Project:     config.GetProject(),
+		Project:     config.GetProject(ghClient.GetRepo()),
 		Summary:     issue.GetTitle(),
 		Description: issue.GetBody(),
 		Unknowns:    map[string]interface{}{},
