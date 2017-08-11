@@ -1,5 +1,5 @@
-hash: a0339b3b50623cfca11b797c3a2e2be3e4c57226d7929f7565da63ef4bec57bc
-updated: 2017-07-17T14:56:22.502725577-07:00
+hash: ca3d2b839b59106eb3850fc211958a5dd057e096e01aae7dbec995e4505a305b
+updated: 2017-08-11T11:44:55.363517889-07:00
 imports:
 - name: github.com/andygrunwald/go-jira
   version: aaa2d02b3ad37877e523eab9978638b107bdc821
@@ -7,6 +7,8 @@ imports:
   version: 32cd0c5b3aef12c76ed64aaf678f6c79736be7dc
 - name: github.com/coreos/pkg
   version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
+- name: github.com/dghubble/oauth1
+  version: 70562a5920ad9b6ff03ef697c0f90ae569abbd2b
 - name: github.com/fatih/structs
   version: 7e5a8eef611ee84dd359503f3969f80df4c50723
 - name: github.com/fsnotify/fsnotify
@@ -63,6 +65,10 @@ imports:
   subpackages:
   - tcontainer
   - treflect
+- name: golang.org/x/crypto
+  version: b176d7def5d71bdd214203491f89843ed217f420
+  subpackages:
+  - ssh/terminal
 - name: golang.org/x/net
   version: b3756b4b77d7b13260a0a2ec658753cf48922eac
   subpackages:
@@ -76,6 +82,7 @@ imports:
   version: 4cd6d1a821c7175768725b55ca82f14683a29ea4
   subpackages:
   - unix
+  - windows
 - name: golang.org/x/text
   version: 836efe42bb4aa16aaa17b9c155d8813d336ed720
   subpackages:
