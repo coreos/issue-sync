@@ -14,8 +14,8 @@ import (
 // use. It allows us to swap in other implementations, such as a dry run
 // clients, or mock clients for testing.
 type GitHubClient interface {
-	ListIssues() ([]*github.Issue, error)
-	ListComments(issue github.Issue) ([]*github.IssueComment, error)
+	ListIssues(repo string) ([]*github.Issue, error)
+	ListComments(repo string, issue github.Issue) ([]*github.IssueComment, error)
 	GetUser(login string) (github.User, error)
 	GetRateLimits() (github.RateLimits, error)
 }
@@ -29,12 +29,12 @@ type realGHClient struct {
 }
 
 // ListIssues returns the list of GitHub issues since the last run of the tool.
-func (g realGHClient) ListIssues() ([]*github.Issue, error) {
+func (g realGHClient) ListIssues(repo string) ([]*github.Issue, error) {
 	log := g.config.GetLogger()
 
 	ctx := context.Background()
 
-	user, repo := g.config.GetRepo()
+	user, repo := g.config.GetRepo(repo)
 
 	i, _, err := g.request(func() (interface{}, *github.Response, error) {
 		return g.client.Issues.ListByRepo(ctx, user, repo, &github.IssueListByRepoOptions{
@@ -61,11 +61,11 @@ func (g realGHClient) ListIssues() ([]*github.Issue, error) {
 
 // ListComments returns the list of all comments on a GitHub issue in
 // ascending order of creation.
-func (g realGHClient) ListComments(issue github.Issue) ([]*github.IssueComment, error) {
+func (g realGHClient) ListComments(repo string, issue github.Issue) ([]*github.IssueComment, error) {
 	log := g.config.GetLogger()
 
 	ctx := context.Background()
-	user, repo := g.config.GetRepo()
+	user, repo := g.config.GetRepo(repo)
 	c, _, err := g.request(func() (interface{}, *github.Response, error) {
 		return g.client.Issues.ListComments(ctx, user, repo, issue.GetNumber(), &github.IssueListCommentsOptions{
 			Sort:      "created",
