@@ -20,7 +20,7 @@ var jCommentRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\) from GitHub use
 // just their GitHub ID for matching.
 var jCommentIDRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\)")
 
-// CreateComments takes a GitHub issue, and retrieves all of its comments. It then
+// CompareComments takes a GitHub issue, and retrieves all of its comments. It then
 // matches each one to a comment in `existing`. If it finds a match, it calls
 // UpdateComment; if it doesn't, it calls CreateComment.
 func CompareComments(config cfg.Config, ghIssue github.Issue, jIssue jira.Issue, ghClient clients.GitHubClient, jClient clients.JIRAClient) error {

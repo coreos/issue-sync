@@ -52,7 +52,7 @@ func (g realGHClient) ListIssues() ([]*github.Issue, error) {
 	ghIssues, ok := i.([]*github.Issue)
 	if !ok {
 		log.Errorf("Get GitHub issues did not return issues! Got: %v", i)
-		return nil, errors.New(fmt.Sprintf("Get GitHub issues failed: expected []*github.Issue; got %T", i))
+		return nil, fmt.Errorf("Get GitHub issues failed: expected []*github.Issue; got %T", i)
 	}
 
 	log.Debug("Collected all GitHub issues")
@@ -80,7 +80,7 @@ func (g realGHClient) ListComments(issue github.Issue) ([]*github.IssueComment, 
 	comments, ok := c.([]*github.IssueComment)
 	if !ok {
 		log.Errorf("Get GitHub comments did not return comments! Got: %v", c)
-		return nil, errors.New(fmt.Sprintf("Get GitHub comments failed: expected []*github.IssueComment; got %T", c))
+		return nil, fmt.Errorf("Get GitHub comments failed: expected []*github.IssueComment; got %T", c)
 	}
 
 	return comments, nil
@@ -101,7 +101,7 @@ func (g realGHClient) GetUser(login string) (github.User, error) {
 	user, ok := u.(*github.User)
 	if !ok {
 		log.Errorf("Get GitHub user did not return user! Got: %v", u)
-		return github.User{}, errors.New(fmt.Sprintf("Get GitHub user failed: expected *github.User; got %T", u))
+		return github.User{}, fmt.Errorf("Get GitHub user failed: expected *github.User; got %T", u)
 	}
 
 	return *user, nil
@@ -124,7 +124,7 @@ func (g realGHClient) GetRateLimits() (github.RateLimits, error) {
 	rate, ok := rl.(*github.RateLimits)
 	if !ok {
 		log.Errorf("Get GitHub rate limits did not return rate limits! Got: %v", rl)
-		return github.RateLimits{}, errors.New(fmt.Sprintf("Get GitHub rate limits failed: expected *github.RateLimits; got %T", rl))
+		return github.RateLimits{}, fmt.Errorf("Get GitHub rate limits failed: expected *github.RateLimits; got %T", rl)
 	}
 
 	return *rate, nil

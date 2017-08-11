@@ -10,3 +10,5 @@ import:
   version: v3
 - package: github.com/cenkalti/backoff
   version: v1.0.0
+- package: github.com/dghubble/oauth1
+  version: v0.4.0

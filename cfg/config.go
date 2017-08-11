@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/andygrunwald/go-jira"
+	"github.com/dghubble/oauth1"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -56,6 +57,9 @@ type Config struct {
 
 	// log is a logger set up with the configured log level, app name, etc.
 	log logrus.Entry
+
+	// basicAuth represents whether we're using HTTP Basic authentication or OAuth.
+	basicAuth bool
 
 	// fieldIDs is the list of custom fields we pulled from the `fields` JIRA endpoint.
 	fieldIDs fields
@@ -105,10 +109,10 @@ func (c *Config) LoadJIRAConfig(client jira.Client) error {
 		if err != nil {
 			c.log.Errorf("Error occured trying to read error body: %v", err)
 			return err
-		} else {
-			c.log.Debugf("Error body: %s", body)
-			return errors.New(string(body))
 		}
+
+		c.log.Debugf("Error body: %s", body)
+		return errors.New(string(body))
 	}
 	c.project = *proj
 
@@ -128,6 +132,12 @@ func (c Config) GetConfigFile() string {
 // GetConfigString returns a string value from the Viper configuration.
 func (c Config) GetConfigString(key string) string {
 	return c.cmdConfig.GetString(key)
+}
+
+// IsBasicAuth is true if we're using HTTP Basic Authentication, and false if
+// we're using OAuth.
+func (c Config) IsBasicAuth() bool {
+	return c.basicAuth
 }
 
 // GetSinceParam returns the `since` configuration parameter, parsed as a time.Time.
@@ -193,14 +203,25 @@ func (c Config) GetRepo() (string, string) {
 	return parts[0], parts[1]
 }
 
+// SetJIRAToken adds the JIRA OAuth tokens in the Viper configuration, ensuring that they
+// are saved for future runs.
+func (c Config) SetJIRAToken(token *oauth1.Token) {
+	c.cmdConfig.Set("jira-token", token.Token)
+	c.cmdConfig.Set("jira-secret", token.TokenSecret)
+}
+
 // configFile is a serializable representation of the current Viper configuration.
 type configFile struct {
 	LogLevel    string        `json:"log-level" mapstructure:"log-level"`
 	GithubToken string        `json:"github-token" mapstructure:"github-token"`
-	JiraUser    string        `json:"jira-user" mapstructure:"jira-user"`
+	JIRAUser    string        `json:"jira-user" mapstructure:"jira-user"`
+	JIRAToken   string        `json:"jira-token" mapstructure:"jira-token"`
+	JIRASecret  string        `json:"jira-secret" mapstructure:"jira-secret"`
+	JIRAKey     string        `json:"jira-private-key" mapstructure:"jira-private-key"`
+	JIRACKey    string        `json:"jira-consumer-key" mapstructure:"jira-consumer-key"`
 	RepoName    string        `json:"repo-name" mapstructure:"repo-name"`
-	JiraUri     string        `json:"jira-uri" mapstructure:"jira-uri"`
-	JiraProject string        `json:"jira-project" mapstructure:"jira-project"`
+	JIRAURI     string        `json:"jira-uri" mapstructure:"jira-uri"`
+	JIRAProject string        `json:"jira-project" mapstructure:"jira-project"`
 	Since       string        `json:"since" mapstructure:"since"`
 	Timeout     time.Duration `json:"timeout" mapstructure:"timeout"`
 }
@@ -246,6 +267,7 @@ func newViper(appName, cfgFile string) *viper.Viper {
 	if cfgFile != "" {
 		v.SetConfigFile(cfgFile)
 	}
+	v.SetConfigType("json")
 
 	if err := v.ReadInConfig(); err == nil {
 		log.WithField("file", v.ConfigFileUsed()).Infof("config file loaded")
@@ -300,7 +322,7 @@ func newLogger(app, level string) *logrus.Entry {
 // real URI, etc. This is the first level of checking. It does not confirm
 // if a JIRA cli is running at `jira-uri` for example; that is checked
 // in getJIRAClient when we actually make a call to the API.
-func (c Config) validateConfig() error {
+func (c *Config) validateConfig() error {
 	// Log level and config file location are validated already
 
 	c.log.Debug("Checking config variables...")
@@ -309,20 +331,53 @@ func (c Config) validateConfig() error {
 		return errors.New("GitHub token required")
 	}
 
-	jUser := c.cmdConfig.GetString("jira-user")
-	if jUser == "" {
-		return errors.New("Jira username required")
-	}
+	c.basicAuth = (c.cmdConfig.GetString("jira-user") != "") && (c.cmdConfig.GetString("jira-pass") != "")
 
-	jPass := c.cmdConfig.GetString("jira-pass")
-	if jPass == "" {
-		fmt.Print("Enter your JIRA password: ")
-		bytePass, err := terminal.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			return errors.New("Jira password required")
+	if c.basicAuth {
+		c.log.Debug("Using HTTP Basic Authentication")
+
+		jUser := c.cmdConfig.GetString("jira-user")
+		if jUser == "" {
+			return errors.New("Jira username required")
 		}
-		fmt.Println()
-		c.cmdConfig.Set("jira-pass", string(bytePass))
+
+		jPass := c.cmdConfig.GetString("jira-pass")
+		if jPass == "" {
+			fmt.Print("Enter your JIRA password: ")
+			bytePass, err := terminal.ReadPassword(int(syscall.Stdin))
+			if err != nil {
+				return errors.New("JIRA password required")
+			}
+			fmt.Println()
+			c.cmdConfig.Set("jira-pass", string(bytePass))
+		}
+	} else {
+		c.log.Debug("Using OAuth 1.0a authentication")
+
+		token := c.cmdConfig.GetString("jira-token")
+		if token == "" {
+			return errors.New("JIRA access token required")
+		}
+
+		secret := c.cmdConfig.GetString("jira-secret")
+		if secret == "" {
+			return errors.New("JIRA access token secret required")
+		}
+
+		consumerKey := c.cmdConfig.GetString("jira-consumer-key")
+		if consumerKey == "" {
+			return errors.New("JIRA consumer key required for OAuth handshake")
+		}
+
+		privateKey := c.cmdConfig.GetString("jira-private-key")
+		if privateKey == "" {
+			return errors.New("JIRA private key required for OAuth handshake")
+		}
+
+		_, err := os.Open(privateKey)
+		if err != nil {
+			return errors.New("JIRA private key must point to existing PEM file")
+		}
 	}
 
 	repo := c.cmdConfig.GetString("repo-name")
@@ -417,17 +472,17 @@ func (c Config) getFieldIDs(client jira.Client) (fields, error) {
 	}
 
 	if fieldIDs.githubID == "" {
-		return fieldIDs, errors.New("Could not find ID of 'GitHub ID' custom field. Check that it is named correctly.")
+		return fieldIDs, errors.New("could not find ID of 'GitHub ID' custom field; check that it is named correctly")
 	} else if fieldIDs.githubNumber == "" {
-		return fieldIDs, errors.New("Could not find ID of 'GitHub Number' custom field. Check that it is named correctly.")
+		return fieldIDs, errors.New("could not find ID of 'GitHub Number' custom field; check that it is named correctly")
 	} else if fieldIDs.githubLabels == "" {
-		return fieldIDs, errors.New("Could not find ID of 'Github Labels' custom field. Check that it is named correctly.")
+		return fieldIDs, errors.New("could not find ID of 'Github Labels' custom field; check that it is named correctly")
 	} else if fieldIDs.githubStatus == "" {
-		return fieldIDs, errors.New("Could not find ID of 'Github Status' custom field. Check that it is named correctly.")
+		return fieldIDs, errors.New("could not find ID of 'Github Status' custom field; check that it is named correctly")
 	} else if fieldIDs.githubReporter == "" {
-		return fieldIDs, errors.New("Could not find ID of 'Github Reporter' custom field. Check that it is named correctly.")
+		return fieldIDs, errors.New("could not find ID of 'Github Reporter' custom field; check that it is named correctly")
 	} else if fieldIDs.lastUpdate == "" {
-		return fieldIDs, errors.New("Could not find ID of 'Last Issue-Sync Update' custom field. Check that it is named correctly.")
+		return fieldIDs, errors.New("could not find ID of 'Last Issue-Sync Update' custom field; check that it is named correctly")
 	}
 
 	c.log.Debug("All fields have been checked.")
