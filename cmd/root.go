@@ -5,8 +5,8 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/coreos/issue-sync/cfg"
-	"github.com/coreos/issue-sync/cli"
 	"github.com/coreos/issue-sync/lib"
+	"github.com/coreos/issue-sync/lib/clients"
 	"github.com/spf13/cobra"
 )
 
@@ -30,20 +30,16 @@ var RootCmd = &cobra.Command{
 			return err
 		}
 
-		ghClient, err := cli.GetGitHubClient(config)
+		ghClient, err := clients.NewGitHubClient(config)
 		if err != nil {
 			return err
 		}
-		jiraClient, err := cli.GetJIRAClient(config)
+		jiraClient, err := clients.NewJIRAClient(&config)
 		if err != nil {
 			return err
 		}
 
-		if err := config.LoadJIRAConfig(*jiraClient); err != nil {
-			return err
-		}
-
-		if err := lib.CompareIssues(config, *ghClient, *jiraClient); err != nil {
+		if err := lib.CompareIssues(config, ghClient, jiraClient); err != nil {
 			return err
 		}
 
