@@ -150,11 +150,14 @@ func UpdateIssue(config cfg.Config, ghIssue github.Issue, jIssue jira.Issue, ghC
 
 		log.Debugf("Successfully updated JIRA issue %s!", jIssue.Key)
 	} else {
-		issue = jIssue
 		log.Debugf("JIRA issue %s is already up to date!", jIssue.Key)
 	}
 
-
+	issue, err := jClient.GetIssue(jIssue.Key)
+	if err != nil {
+		log.Debugf("Failed to retrieve JIRA issue %s!", jIssue.Key)
+		return err
+	}
 
 	if err := CompareComments(config, ghIssue, issue, ghClient, jClient); err != nil {
 		return err
@@ -198,6 +201,11 @@ func CreateIssue(config cfg.Config, issue github.Issue, ghClient clients.GitHubC
 	}
 
 	jIssue, err := jClient.CreateIssue(jIssue)
+	if err != nil {
+		return err
+	}
+
+	jIssue, err = jClient.GetIssue(jIssue.Key)
 	if err != nil {
 		return err
 	}
