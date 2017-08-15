@@ -79,9 +79,9 @@ lives at a non-root URL, the path must be included. For example,
 `jira-project` is the key (not the name) of the project in JIRA to
 which the issues will be synchronized.
 
-`since` is the cutoff date issue-sync will use when search for issues to
-synchronize. If an issue was last updated before this time, it will not
-be synchronized. Usually this is the last run of the tool. It is in
+`since` is the cutoff date issue-sync will use when searching for issues
+to synchronize. If an issue was last updated before this time, it will
+not be synchronized. Usually this is the last run of the tool. It is in
 ISO-8601 format.
 
 `timeout` represents the duration of time for which an API request will
