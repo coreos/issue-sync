@@ -1,7 +1,7 @@
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
-  name: issue-sync-prod
+  name: issue-sync
 spec:
   replicas: 1
   template:
@@ -19,68 +19,68 @@ spec:
             value: "1800"
           - name: ISSUE_SYNC_LOG_LEVEL
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: log-level
           - name: ISSUE_SYNC_GITHUB_TOKEN
             valueFrom:
               secretKeyRef:
-                name: issecrets
+                name: issue-sync
                 key: github-token
           - name: ISSUE_SYNC_JIRA_TOKEN
             valueFrom:
               secretKeyRef:
-                name: issecrets
+                name: issue-sync
                 key: jira-token
           - name: ISSUE_SYNC_JIRA_SECRET
             valueFrom:
               secretKeyRef:
-                name: issecrets
+                name: issue-sync
                 key: jira-secret
           - name: ISSUE_SYNC_JIRA_CONSUMER_KEY
             valueFrom:
               secretKeyRef:
-                name: issecrets
+                name: issue-sync
                 key: jira-consumer-key
           - name: ISSUE_SYNC_JIRA_PRIVATE_KEY
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: jira-private-key
           - name: ISSUE_SYNC_JIRA_URI
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: jira-uri
           - name: ISSUE_SYNC_REPO_NAME
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: repo-name
           - name: ISSUE_SYNC_JIRA_PROJECT
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: jira-private-key
           - name: ISSUE_SYNC_JIRA_URI
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: jira-uri
           - name: ISSUE_SYNC_REPO_NAME
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: repo-name
           - name: ISSUE_SYNC_JIRA_PROJECT
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: jira-project
           - name: ISSUE_SYNC_TIMEOUT
             valueFrom:
-              secretKeyRef:
-                name: issecrets
+              configMapKeyRef:
+                name: issue-sync
                 key: timeout
         volumeMounts:
         - name: key
