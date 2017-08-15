@@ -167,14 +167,7 @@ func (j realJIRAClient) CreateIssue(issue jira.Issue) (jira.Issue, error) {
 		return jira.Issue{}, fmt.Errorf("Create JIRA issue failed: expected *jira.Issue; got %T", i)
 	}
 
-	// The JIRA create endpoint doesn't return more in the issue than just
-	// the key and ID, so call the get endpoint to get a full issue object
-	issue, err = j.GetIssue(is.Key)
-	if err != nil {
-		return jira.Issue{}, err
-	}
-
-	return issue, nil
+	return *is, nil
 }
 
 // UpdateIssue updates a given issue (identified by the Key field of the provided
@@ -196,14 +189,7 @@ func (j realJIRAClient) UpdateIssue(issue jira.Issue) (jira.Issue, error) {
 		return jira.Issue{}, fmt.Errorf("Update JIRA issue failed: expected *jira.Issue; got %T", i)
 	}
 
-	// The JIRA update endpoint doesn't return more in the issue than just
-	// the key and ID, so call the get endpoint to get a full issue object
-	issue, err = j.GetIssue(is.Key)
-	if err != nil {
-		return jira.Issue{}, err
-	}
-
-	return issue, nil
+	return *is, nil
 }
 
 // CreateComment adds a comment to the provided JIRA issue using the fields from
