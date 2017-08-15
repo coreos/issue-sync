@@ -27,7 +27,7 @@ application connection and add a public key. Instructions can be found
 in
 [OAuth for Rest APIs](https://developer.atlassian.com/cloud/jira/platform/jira-rest-api-oauth-authentication/).
 
-### Application configuration
+### Application Configuration
 
 Arguments to the program may be passed on the command line or in a
 JSON configuration file. For the command line arguments, run `issue-sync
@@ -79,8 +79,8 @@ lives at a non-root URL, the path must be included. For example,
 `jira-project` is the key (not the name) of the project in JIRA to
 which the issues will be synchronized.
 
-`since` is the earliest the application will look for GitHub issue
-updates. If an issue was last updated before this time, it will not
+`since` is the cutoff date issue-sync will use when search for issues to
+synchronize. If an issue was last updated before this time, it will not
 be synchronized. Usually this is the last run of the tool. It is in
 ISO-8601 format.
 

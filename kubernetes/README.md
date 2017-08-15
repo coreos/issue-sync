@@ -5,12 +5,12 @@
 Copy your private key which you have configured with JIRA into the
 current directory.
 
-Fill out the config.yaml and secret.yaml file with the correct
+Fill out the config.yaml and secret.yaml files with the correct
 configuration. These are the same keys which are used in the application
 command line parameters or configuration file, as noted in the main
-README. Make sure they are base64 encoded, for example with
-`echo -n "value" | base64 -w 0`, where `value` is the configuration
-value you would like to encode.
+README. Make sure the values in the secret are base64 encoded, for
+example with `echo -n "value" | base64 -w 0`, where `value` is the
+configuration value you would like to encode.
 
 Create the secret and configmap with
 
