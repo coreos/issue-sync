@@ -45,7 +45,7 @@ jira-pass|string| |false|null
 jira-token|string| |false|null
 jira-secret|string| |false|null
 jira-consumer-key|string| |false|null
-jira-private-key|string| |false|null
+jira-private-key-path|string| |false|null
 repo-name|string|"coreos/issue-sync"|true|null
 jira-uri|string|"https://jira.example.com|true|null
 jira-project|string|"SYNC"|true|null
@@ -66,8 +66,8 @@ more details.
 
 `jira-token` and `jira-secret` are OAuth access tokens which will be
 used to perform an OAuth connection to JIRA. `jira-consumer-key` and
-`jira-private-key` are the RSA key used for OAuth. See `Authentication`
-for more details.
+`jira-private-key-path` are the RSA key used for OAuth. See
+`Authentication` for more details.
 
 `repo-name` is the GitHub repo from which issues will be retrieved. It
 must be in the form `owner/repo`, for example `coreos/issue-sync`.

@@ -19,7 +19,13 @@ kubectl --kubeconfig /path/to/kubeconfig create -f secret.yaml
 kubectl --kubeconfig /path/to/kubeconfig create -f config.yaml
 ```
 
-then the deployment with
+then create the private key secret with
+
+```
+kubectl --kubeconfig /path/to/kubeconfig create secret generic privatekey --from-file jira_privatekey.pem
+```
+
+Finally, create the deployment with
 
 ```
 kubectl --kubeconfig /path/to/kubeconfig create -f deployment.yaml

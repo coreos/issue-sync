@@ -217,7 +217,7 @@ type configFile struct {
 	JIRAUser    string        `json:"jira-user" mapstructure:"jira-user"`
 	JIRAToken   string        `json:"jira-token" mapstructure:"jira-token"`
 	JIRASecret  string        `json:"jira-secret" mapstructure:"jira-secret"`
-	JIRAKey     string        `json:"jira-private-key" mapstructure:"jira-private-key"`
+	JIRAKey     string        `json:"jira-private-key-path" mapstructure:"jira-private-key-path"`
 	JIRACKey    string        `json:"jira-consumer-key" mapstructure:"jira-consumer-key"`
 	RepoName    string        `json:"repo-name" mapstructure:"repo-name"`
 	JIRAURI     string        `json:"jira-uri" mapstructure:"jira-uri"`
@@ -369,7 +369,7 @@ func (c *Config) validateConfig() error {
 			return errors.New("JIRA consumer key required for OAuth handshake")
 		}
 
-		privateKey := c.cmdConfig.GetString("jira-private-key")
+		privateKey := c.cmdConfig.GetString("jira-private-key-path")
 		if privateKey == "" {
 			return errors.New("JIRA private key required for OAuth handshake")
 		}
