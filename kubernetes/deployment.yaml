@@ -47,7 +47,7 @@ spec:
                 key: jira-consumer-key
           - name: ISSUE_SYNC_JIRA_PRIVATE_KEY_PATH
             valueFrom:
-              configMapKeyRef:
+              secretKeyRef:
                 name: issue-sync
                 key: jira-private-key-path
           - name: ISSUE_SYNC_JIRA_URI

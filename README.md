@@ -50,14 +50,14 @@ repo-name|string|"coreos/issue-sync"|true|null
 jira-uri|string|"https://jira.example.com|true|null
 jira-project|string|"SYNC"|true|null
 since|string|"2017-07-01T13:45:00-0800"|false|"1970-01-01T00:00:00+0000"
-timeout|duration|5000000000|false|60000000000
+timeout|duration|500ms|false|1m
 
 ### Configuration Key Descriptions
 
 `log-level` is the minimum level which will be logged; any output below
 this value will be discarded.
 
-`github-token` is a personal access token, used to access GitHub as a
+`github-token` is a personal access token used to access GitHub as a
 specific user.
 
 `jira-user` and `jira-pass` are the username (i.e. email) and password
@@ -72,8 +72,8 @@ used to perform an OAuth connection to JIRA. `jira-consumer-key` and
 `repo-name` is the GitHub repo from which issues will be retrieved. It
 must be in the form `owner/repo`, for example `coreos/issue-sync`.
 
-`jira-uri` is the base URI of the JIRA instance. If the JIRA instance
-lives on a subdirectory, that must be included. For example,
+`jira-uri` is the base URL of the JIRA instance. If the JIRA instance
+lives at a non-root URL, the path must be included. For example,
 `https://example.com/jira`.
 
 `jira-project` is the key (not the name) of the project in JIRA to
@@ -85,8 +85,9 @@ be synchronized. Usually this is the last run of the tool. It is in
 ISO-8601 format.
 
 `timeout` represents the duration of time for which an API request will
-be retried in case of failure. It is currently represented in
-nanoseconds.
+be retried in case of failure. Human-friendly strings such as `30s` are
+accepted as input, although the application will save it to the file
+in a number of nanoseconds.
 
 ### Configuration File
 
