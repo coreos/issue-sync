@@ -1,0 +1,92 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: issue-sync-prod
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: issue-sync
+    spec:
+      containers:
+      - name: issue-sync
+        image: quay.io/coreos/issue-sync:v0.2.0
+        command: ["/bin/sh"]
+        args: ["-c", "while true; do ./issue-sync --config config.json; sleep $(ISSUE_SYNC_PERIOD); done"]
+        env:
+          - name: ISSUE_SYNC_PERIOD
+            value: "1800"
+          - name: ISSUE_SYNC_LOG_LEVEL
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: log-level
+          - name: ISSUE_SYNC_GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: github-token
+          - name: ISSUE_SYNC_JIRA_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-token
+          - name: ISSUE_SYNC_JIRA_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-secret
+          - name: ISSUE_SYNC_JIRA_CONSUMER_KEY
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-consumer-key
+          - name: ISSUE_SYNC_JIRA_PRIVATE_KEY
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-private-key
+          - name: ISSUE_SYNC_JIRA_URI
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-uri
+          - name: ISSUE_SYNC_REPO_NAME
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: repo-name
+          - name: ISSUE_SYNC_JIRA_PROJECT
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-private-key
+          - name: ISSUE_SYNC_JIRA_URI
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-uri
+          - name: ISSUE_SYNC_REPO_NAME
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: repo-name
+          - name: ISSUE_SYNC_JIRA_PROJECT
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: jira-project
+          - name: ISSUE_SYNC_TIMEOUT
+            valueFrom:
+              secretKeyRef:
+                name: issecrets
+                key: timeout
+        volumeMounts:
+        - name: key
+          mountPath: /opt/issue-sync/config
+          readOnly: true
+      volumes:
+      - name: key
+        secret:
+          secretName: privatekey
