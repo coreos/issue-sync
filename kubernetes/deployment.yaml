@@ -16,7 +16,10 @@ spec:
         args: ["-c", "while true; do ./issue-sync --config config.json; sleep $(ISSUE_SYNC_PERIOD); done"]
         env:
           - name: ISSUE_SYNC_PERIOD
-            value: "1800"
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: period
           - name: ISSUE_SYNC_LOG_LEVEL
             valueFrom:
               configMapKeyRef:

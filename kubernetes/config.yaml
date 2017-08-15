@@ -9,3 +9,4 @@ data:
   repo-name:
   jira-project:
   timeout:
+  period:
