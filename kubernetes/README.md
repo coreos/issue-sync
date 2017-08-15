@@ -3,7 +3,7 @@
 ## Instructions
 
 Copy your private key which you have configured with JIRA into the
-current directory, and name it `jira_privatekey.pem`.
+current directory.
 
 Fill out the config.yaml and secret.yaml file with the correct
 configuration. These are the same keys which are used in the application
@@ -22,8 +22,11 @@ kubectl --kubeconfig /path/to/kubeconfig create -f config.yaml
 then create the private key secret with
 
 ```
-kubectl --kubeconfig /path/to/kubeconfig create secret generic privatekey --from-file jira_privatekey.pem
+kubectl --kubeconfig /path/to/kubeconfig create secret generic privatekey --from-file privatekey.pem
 ```
+
+where `privatekey.pem` can be replaced with the name of your private key
+file, as it is in secret.yaml.
 
 Finally, create the deployment with
 
