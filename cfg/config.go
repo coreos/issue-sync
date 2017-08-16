@@ -155,6 +155,16 @@ func (c Config) IsDryRun() bool {
 	return c.cmdConfig.GetBool("dry-run")
 }
 
+// IsDaemon returns whether the application is running as a daemon
+func (c Config) IsDaemon() bool {
+	return c.cmdConfig.GetDuration("period") != 0
+}
+
+// GetDaemonPeriod returns the period on which the tool runs if in daemon mode.
+func (c Config) GetDaemonPeriod() time.Duration {
+	return c.cmdConfig.GetDuration("period")
+}
+
 // GetTimeout returns the configured timeout on all API calls, parsed as a time.Duration.
 func (c Config) GetTimeout() time.Duration {
 	return c.cmdConfig.GetDuration("timeout")
@@ -227,7 +237,7 @@ type configFile struct {
 }
 
 // SaveConfig updates the `since` parameter to now, then saves the configuration file.
-func (c Config) SaveConfig() error {
+func (c *Config) SaveConfig() error {
 	c.cmdConfig.Set("since", time.Now().Format(dateFormat))
 
 	var cf configFile
