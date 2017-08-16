@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -33,12 +32,12 @@ func CompareIssues(config cfg.Config, ghClient clients.GitHubClient, jiraClient 
 		return nil
 	}
 
-	ids := make([]string, len(ghIssues))
+	ids := make([]int, len(ghIssues))
 	for i, v := range ghIssues {
-		ids[i] = fmt.Sprint(*v.ID)
+		ids[i] = v.GetID()
 	}
 
-	jiraIssues, err := jiraClient.ListIssues(strings.Join(ids, ","))
+	jiraIssues, err := jiraClient.ListIssues(ids)
 	if err != nil {
 		return err
 	}
@@ -51,14 +50,14 @@ func CompareIssues(config cfg.Config, ghClient clients.GitHubClient, jiraClient 
 			id, _ := jIssue.Fields.Unknowns.Int(config.GetFieldKey(cfg.GitHubID))
 			if int64(*ghIssue.ID) == id {
 				found = true
-				if err := UpdateIssue(config, *ghIssue, jIssue, ghClient, jiraClient); err != nil {
+				if err := UpdateIssue(config, ghIssue, jIssue, ghClient, jiraClient); err != nil {
 					log.Errorf("Error updating issue %s. Error: %v", jIssue.Key, err)
 				}
 				break
 			}
 		}
 		if !found {
-			if err := CreateIssue(config, *ghIssue, ghClient, jiraClient); err != nil {
+			if err := CreateIssue(config, ghIssue, ghClient, jiraClient); err != nil {
 				log.Errorf("Error creating issue for #%d. Error: %v", *ghIssue.Number, err)
 			}
 		}

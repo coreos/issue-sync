@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/andygrunwald/go-jira"
 	"github.com/cenkalti/backoff"
@@ -13,8 +14,12 @@ import (
 	"github.com/google/go-github/github"
 )
 
-// commentDateFormat is the format used in the headers of JIRA comments
+// commentDateFormat is the format used in the headers of JIRA comments.
 const commentDateFormat = "15:04 PM, January 2 2006"
+
+// maxJQLIssueLength is the maximum number of GitHub issues we can
+// use before we need to stop using JQL and filter issues ourself.
+const maxJQLIssueLength = 100
 
 // getErrorBody reads the HTTP response body of a JIRA API response,
 // logs it as an error, and returns an error object with the contents
@@ -38,7 +43,7 @@ func getErrorBody(config cfg.Config, res *jira.Response) error {
 // as well as swap in other implementations, such as for dry run
 // or test mocking.
 type JIRAClient interface {
-	ListIssues(ids string) ([]jira.Issue, error)
+	ListIssues(ids []int) ([]jira.Issue, error)
 	GetIssue(key string) (jira.Issue, error)
 	CreateIssue(issue jira.Issue) (jira.Issue, error)
 	UpdateIssue(issue jira.Issue) (jira.Issue, error)
@@ -105,11 +110,23 @@ type realJIRAClient struct {
 // ListIssues returns a list of JIRA issues on the configured project which
 // have GitHub IDs in the provided list. `ids` should be a comma-separated
 // list of GitHub IDs.
-func (j realJIRAClient) ListIssues(ids string) ([]jira.Issue, error) {
+func (j realJIRAClient) ListIssues(ids []int) ([]jira.Issue, error) {
 	log := j.config.GetLogger()
 
-	jql := fmt.Sprintf("project='%s' AND cf[%s] in (%s)",
-		j.config.GetProjectKey(), j.config.GetFieldID(cfg.GitHubID), ids)
+	idStrs := make([]string, len(ids))
+	for i, v := range ids {
+		idStrs[i] = fmt.Sprint(v)
+	}
+
+	var jql string
+	// If the list of IDs is too long, we get a 414 Request-URI Too Large, so in that case,
+	// we'll need to do the filtering ourselves.
+	if len(ids) < maxJQLIssueLength {
+		jql = fmt.Sprintf("project='%s' AND cf[%s] in (%s)",
+			j.config.GetProjectKey(), j.config.GetFieldID(cfg.GitHubID), strings.Join(idStrs, ","))
+	} else {
+		jql = fmt.Sprintf("project='%s'", j.config.GetProjectKey())
+	}
 
 	ji, res, err := j.request(func() (interface{}, *jira.Response, error) {
 		return j.client.Issue.Search(jql, nil)
@@ -121,10 +138,28 @@ func (j realJIRAClient) ListIssues(ids string) ([]jira.Issue, error) {
 	jiraIssues, ok := ji.([]jira.Issue)
 	if !ok {
 		log.Errorf("Get JIRA issues did not return issues! Got: %v", ji)
-		return nil, fmt.Errorf("Get JIRA issues failed: expected []jira.Issue; got %T", ji)
+		return nil, fmt.Errorf("get JIRA issues failed: expected []jira.Issue; got %T", ji)
 	}
 
-	return jiraIssues, nil
+	var issues []jira.Issue
+	if len(ids) < maxJQLIssueLength {
+		// The issues were already filtered by our JQL, so use as is
+		issues = jiraIssues
+	} else {
+		// Filter only issues which have a defined GitHub ID in the list of IDs
+		for _, v := range jiraIssues {
+			if id, err := v.Fields.Unknowns.Int(j.config.GetFieldKey(cfg.GitHubID)); err == nil {
+				for _, idOpt := range ids {
+					if id == int64(idOpt) {
+						issues = append(issues, v)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return issues, nil
 }
 
 // GetIssue returns a single JIRA issue within the configured project
@@ -192,6 +227,10 @@ func (j realJIRAClient) UpdateIssue(issue jira.Issue) (jira.Issue, error) {
 	return *is, nil
 }
 
+// maxBodyLength is the maximum length of a JIRA comment body, which is currently
+// 1^15-1.
+const maxBodyLength = 1 << 15
+
 // CreateComment adds a comment to the provided JIRA issue using the fields from
 // the provided GitHub comment. It then returns the created comment.
 func (j realJIRAClient) CreateComment(issue jira.Issue, comment github.IssueComment, github GitHubClient) (jira.Comment, error) {
@@ -212,6 +251,11 @@ func (j realJIRAClient) CreateComment(issue jira.Issue, comment github.IssueComm
 		comment.CreatedAt.Format(commentDateFormat),
 		comment.GetBody(),
 	)
+
+	if len(body) >= maxBodyLength {
+		body = body[:maxBodyLength]
+	}
+
 	jComment := jira.Comment{
 		Body: body,
 	}
@@ -252,6 +296,10 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 		comment.CreatedAt.Format(commentDateFormat),
 		comment.GetBody(),
 	)
+
+	if len(body) < maxBodyLength {
+		body = body[:maxBodyLength]
+	}
 
 	// As it is, the JIRA API we're using doesn't have any way to update comments natively.
 	// So, we have to build the request ourselves.
@@ -342,11 +390,23 @@ func truncate(s string, length int) string {
 // list of GitHub IDs.
 //
 // This function is identical to that in realJIRAClient.
-func (j dryrunJIRAClient) ListIssues(ids string) ([]jira.Issue, error) {
+func (j dryrunJIRAClient) ListIssues(ids []int) ([]jira.Issue, error) {
 	log := j.config.GetLogger()
 
-	jql := fmt.Sprintf("project='%s' AND cf[%s] in (%s)",
-		j.config.GetProjectKey(), j.config.GetFieldID(cfg.GitHubID), ids)
+	idStrs := make([]string, len(ids))
+	for i, v := range ids {
+		idStrs[i] = fmt.Sprint(v)
+	}
+
+	var jql string
+	// If the list of IDs is too long, we get a 414 Request-URI Too Large, so in that case,
+	// we'll need to do the filtering ourselves.
+	if len(ids) < maxJQLIssueLength {
+		jql = fmt.Sprintf("project='%s' AND cf[%s] in (%s)",
+			j.config.GetProjectKey(), j.config.GetFieldID(cfg.GitHubID), strings.Join(idStrs, ","))
+	} else {
+		jql = fmt.Sprintf("project='%s'", j.config.GetProjectKey())
+	}
 
 	ji, res, err := j.request(func() (interface{}, *jira.Response, error) {
 		return j.client.Issue.Search(jql, nil)
@@ -358,10 +418,28 @@ func (j dryrunJIRAClient) ListIssues(ids string) ([]jira.Issue, error) {
 	jiraIssues, ok := ji.([]jira.Issue)
 	if !ok {
 		log.Errorf("Get JIRA issues did not return issues! Got: %v", ji)
-		return nil, fmt.Errorf("Get JIRA issues failed: expected []jira.Issue; got %T", ji)
+		return nil, fmt.Errorf("get JIRA issues failed: expected []jira.Issue; got %T", ji)
 	}
 
-	return jiraIssues, nil
+	var issues []jira.Issue
+	if len(ids) < maxJQLIssueLength {
+		// The issues were already filtered by our JQL, so use as is
+		issues = jiraIssues
+	} else {
+		// Filter only issues which have a defined GitHub ID in the list of IDs
+		for _, v := range jiraIssues {
+			if id, err := v.Fields.Unknowns.Int(j.config.GetFieldKey(cfg.GitHubID)); err == nil {
+				for _, idOpt := range ids {
+					if id == int64(idOpt) {
+						issues = append(issues, v)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return issues, nil
 }
 
 // GetIssue returns a single JIRA issue within the configured project

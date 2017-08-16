@@ -14,7 +14,7 @@ import (
 // use. It allows us to swap in other implementations, such as a dry run
 // clients, or mock clients for testing.
 type GitHubClient interface {
-	ListIssues() ([]*github.Issue, error)
+	ListIssues() ([]github.Issue, error)
 	ListComments(issue github.Issue) ([]*github.IssueComment, error)
 	GetUser(login string) (github.User, error)
 	GetRateLimits() (github.RateLimits, error)
@@ -29,34 +29,54 @@ type realGHClient struct {
 }
 
 // ListIssues returns the list of GitHub issues since the last run of the tool.
-func (g realGHClient) ListIssues() ([]*github.Issue, error) {
+func (g realGHClient) ListIssues() ([]github.Issue, error) {
 	log := g.config.GetLogger()
 
 	ctx := context.Background()
 
 	user, repo := g.config.GetRepo()
 
-	i, _, err := g.request(func() (interface{}, *github.Response, error) {
-		return g.client.Issues.ListByRepo(ctx, user, repo, &github.IssueListByRepoOptions{
-			Since: g.config.GetSinceParam(),
-			State: "all",
-			ListOptions: github.ListOptions{
-				PerPage: 100,
-			},
+	// Set it so that it will run the loop once, and it'll be updated in the loop.
+	pages := 1
+	var issues []github.Issue
+
+	for page := 0; page < pages; page++ {
+		is, res, err := g.request(func() (interface{}, *github.Response, error) {
+			return g.client.Issues.ListByRepo(ctx, user, repo, &github.IssueListByRepoOptions{
+				Since:     g.config.GetSinceParam(),
+				State:     "all",
+				Sort:      "created",
+				Direction: "asc",
+				ListOptions: github.ListOptions{
+					Page:    page,
+					PerPage: 100,
+				},
+			})
 		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	ghIssues, ok := i.([]*github.Issue)
-	if !ok {
-		log.Errorf("Get GitHub issues did not return issues! Got: %v", i)
-		return nil, fmt.Errorf("Get GitHub issues failed: expected []*github.Issue; got %T", i)
+		if err != nil {
+			return nil, err
+		}
+		issuePointers, ok := is.([]*github.Issue)
+		if !ok {
+			log.Errorf("Get GitHub issues did not return issues! Got: %v", is)
+			return nil, fmt.Errorf("get GitHub issues failed: expected []*github.Issue; got %T", is)
+		}
+
+		var issuePage []github.Issue
+		for _, v := range issuePointers {
+			// If PullRequestLinks is not nil, it's a Pull Request
+			if v.PullRequestLinks == nil {
+				issuePage = append(issuePage, *v)
+			}
+		}
+
+		pages = res.LastPage
+		issues = append(issues, issuePage...)
 	}
 
 	log.Debug("Collected all GitHub issues")
 
-	return ghIssues, nil
+	return issues, nil
 }
 
 // ListComments returns the list of all comments on a GitHub issue in
