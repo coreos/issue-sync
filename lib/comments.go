@@ -13,12 +13,12 @@ import (
 // jCommentRegex matches a generated JIRA comment. It has matching groups to retrieve the
 // GitHub Comment ID (\1), the GitHub username (\2), the GitHub real name (\3, if it exists),
 // the time the comment was posted (\3 or \4), and the body of the comment (\4 or \5).
-var jCommentRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\) from GitHub user (\\w+) \\((.+)\\)? at (.+):\\n\\n(.+)$")
+var jCommentRegex = regexp.MustCompile("^Comment \\[\\(ID (\\d+)\\)\\|.*?] from GitHub user \\[(\\w+)\\|.*?] \\((.+)\\)? at (.+):\\n\\n(.+)$")
 
 // jCommentIDRegex just matches the beginning of a generated JIRA comment. It's a smaller,
 // simpler, and more efficient regex, to quickly filter only generated comments and retrieve
 // just their GitHub ID for matching.
-var jCommentIDRegex = regexp.MustCompile("^Comment \\(ID (\\d+)\\)")
+var jCommentIDRegex = regexp.MustCompile("^Comment \\[\\(ID (\\d+)\\)\\|")
 
 // CompareComments takes a GitHub issue, and retrieves all of its comments. It then
 // matches each one to a comment in `existing`. If it finds a match, it calls

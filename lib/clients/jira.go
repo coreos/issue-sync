@@ -228,7 +228,7 @@ func (j realJIRAClient) UpdateIssue(issue jira.Issue) (jira.Issue, error) {
 }
 
 // maxBodyLength is the maximum length of a JIRA comment body, which is currently
-// 1^15-1.
+// 2^15-1.
 const maxBodyLength = 1 << 15
 
 // CreateComment adds a comment to the provided JIRA issue using the fields from
@@ -241,7 +241,8 @@ func (j realJIRAClient) CreateComment(issue jira.Issue, comment github.IssueComm
 		return jira.Comment{}, err
 	}
 
-	body := fmt.Sprintf("Comment (ID %d) from GitHub user %s", comment.GetID(), user.GetLogin())
+	body := fmt.Sprintf("Comment [(ID %d)|%s]", comment.GetID(), comment.GetHTMLURL())
+	body = fmt.Sprintf("%s from GitHub user [%s|%s]", body, user.GetLogin(), user.GetHTMLURL())
 	if user.GetName() != "" {
 		body = fmt.Sprintf("%s (%s)", body, user.GetName())
 	}
@@ -286,7 +287,8 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 		return jira.Comment{}, err
 	}
 
-	body := fmt.Sprintf("Comment (ID %d) from GitHub user %s", comment.GetID(), user.GetLogin())
+	body := fmt.Sprintf("Comment [(ID %d)|%s]", comment.GetID(), comment.GetHTMLURL())
+	body = fmt.Sprintf("%s from GitHub user [%s|%s]", body, user.GetLogin(), user.GetHTMLURL())
 	if user.GetName() != "" {
 		body = fmt.Sprintf("%s (%s)", body, user.GetName())
 	}
