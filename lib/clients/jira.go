@@ -12,6 +12,7 @@ import (
 	"github.com/cenkalti/backoff"
 	"github.com/coreos/issue-sync/cfg"
 	"github.com/google/go-github/github"
+	"time"
 )
 
 // commentDateFormat is the format used in the headers of JIRA comments.
@@ -337,6 +338,8 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 // error. If it continues to fail until a maximum time is reached, it returns
 // a nil result as well as the returned HTTP response and a timeout error.
 func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (interface{}, *jira.Response, error) {
+	log := j.config.GetLogger()
+
 	var ret interface{}
 	var res *jira.Response
 	var err error
@@ -349,7 +352,12 @@ func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = j.config.GetTimeout()
 
-	er := backoff.Retry(op, b)
+	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+		duration /= 1000000 // Convert nanoseconds to milliseconds
+		duration *= 1000000 // Convert back so it appears correct
+
+		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
+	})
 	if er != nil {
 		return ret, res, er
 	}
@@ -599,6 +607,8 @@ func (j dryrunJIRAClient) UpdateComment(issue jira.Issue, id string, comment git
 //
 // This function is identical to that in realJIRAClient.
 func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error)) (interface{}, *jira.Response, error) {
+	log := j.config.GetLogger()
+
 	var ret interface{}
 	var res *jira.Response
 	var err error
@@ -611,7 +621,12 @@ func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error))
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = j.config.GetTimeout()
 
-	er := backoff.Retry(op, b)
+	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+		duration /= 1000000 // Convert nanoseconds to milliseconds
+		duration *= 1000000 // Convert back so it appears correct
+
+		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
+	})
 	if er != nil {
 		return ret, res, er
 	}

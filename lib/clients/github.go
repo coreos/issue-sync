@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"time"
+
 	"github.com/cenkalti/backoff"
 	"github.com/coreos/issue-sync/cfg"
 	"github.com/google/go-github/github"
@@ -155,6 +157,8 @@ func (g realGHClient) GetRateLimits() (github.RateLimits, error) {
 // error. If it continues to fail until a maximum time is reached, it returns
 // a nil result as well as the returned HTTP response and a timeout error.
 func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (interface{}, *github.Response, error) {
+	log := g.config.GetLogger()
+
 	var ret interface{}
 	var res *github.Response
 	var err error
@@ -167,7 +171,12 @@ func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = g.config.GetTimeout()
 
-	er := backoff.Retry(op, b)
+	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+		duration /= 1000000 // Convert nanoseconds to milliseconds
+		duration *= 1000000 // Convert back so it appears correct
+
+		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
+	})
 	if er != nil {
 		return nil, nil, er
 	}
