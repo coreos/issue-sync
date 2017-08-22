@@ -151,6 +151,8 @@ func (g realGHClient) GetRateLimits() (github.RateLimits, error) {
 	return *rate, nil
 }
 
+const retryBackoffRoundRatio = time.Millisecond / time.Nanosecond
+
 // request takes an API function from the GitHub library
 // and calls it with exponential backoff. If the function succeeds, it
 // returns the expected value and the GitHub API response, as well as a nil
@@ -172,8 +174,9 @@ func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (
 	b.MaxElapsedTime = g.config.GetTimeout()
 
 	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
-		duration /= 1000000 // Convert nanoseconds to milliseconds
-		duration *= 1000000 // Convert back so it appears correct
+		// Round to a whole number of milliseconds
+		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
+		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})

@@ -353,8 +353,9 @@ func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (
 	b.MaxElapsedTime = j.config.GetTimeout()
 
 	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
-		duration /= 1000000 // Convert nanoseconds to milliseconds
-		duration *= 1000000 // Convert back so it appears correct
+		// Round to a whole number of milliseconds
+		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
+		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})
@@ -622,8 +623,9 @@ func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error))
 	b.MaxElapsedTime = j.config.GetTimeout()
 
 	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
-		duration /= 1000000 // Convert nanoseconds to milliseconds
-		duration *= 1000000 // Convert back so it appears correct
+		// Round to a whole number of milliseconds
+		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
+		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})
