@@ -8,11 +8,12 @@ import (
 	"regexp"
 	"strings"
 
+	"time"
+
 	"github.com/andygrunwald/go-jira"
 	"github.com/cenkalti/backoff"
 	"github.com/coreos/issue-sync/cfg"
 	"github.com/google/go-github/github"
-	"time"
 )
 
 // commentDateFormat is the format used in the headers of JIRA comments.
@@ -342,28 +343,28 @@ func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (
 
 	var ret interface{}
 	var res *jira.Response
-	var err error
+	var reqErr error
 
 	op := func() error {
-		ret, res, err = f()
-		return err
+		ret, res, reqErr = f()
+		return reqErr
 	}
 
 	b := backoff.NewExponentialBackOff()
-	b.MaxElapsedTime = j.config.GetTimeout()
+	b.MaxElapsedTime = g.config.GetTimeout()
 
-	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+	backoffErr := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
 		// Round to a whole number of milliseconds
 		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
 		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})
-	if er != nil {
-		return ret, res, er
+	if backoffErr != nil {
+		return nil, nil, backoffErr
 	}
 
-	return ret, res, err
+	return ret, res, reqErr
 }
 
 // dryrunJIRAClient is an implementation of JIRAClient which performs all
@@ -612,26 +613,26 @@ func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error))
 
 	var ret interface{}
 	var res *jira.Response
-	var err error
+	var reqErr error
 
 	op := func() error {
-		ret, res, err = f()
-		return err
+		ret, res, reqErr = f()
+		return reqErr
 	}
 
 	b := backoff.NewExponentialBackOff()
-	b.MaxElapsedTime = j.config.GetTimeout()
+	b.MaxElapsedTime = g.config.GetTimeout()
 
-	er := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+	backoffErr := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
 		// Round to a whole number of milliseconds
 		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
 		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})
-	if er != nil {
-		return ret, res, er
+	if backoffErr != nil {
+		return nil, nil, backoffErr
 	}
 
-	return ret, res, err
+	return ret, res, reqErr
 }
