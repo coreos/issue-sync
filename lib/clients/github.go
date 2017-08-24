@@ -163,11 +163,11 @@ func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (
 
 	var ret interface{}
 	var res *github.Response
-	var reqErr error
 
 	op := func() error {
-		ret, res, reqErr = f()
-		return reqErr
+		var err error
+		ret, res, err = f()
+		return err
 	}
 
 	b := backoff.NewExponentialBackOff()
@@ -180,11 +180,8 @@ func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})
-	if backoffErr != nil {
-		return nil, nil, backoffErr
-	}
 
-	return ret, res, reqErr
+	return ret, res, backoffErr
 }
 
 // NewGitHubClient creates a GitHubClient and returns it; which

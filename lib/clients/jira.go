@@ -343,15 +343,15 @@ func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (
 
 	var ret interface{}
 	var res *jira.Response
-	var reqErr error
 
 	op := func() error {
-		ret, res, reqErr = f()
-		return reqErr
+		var err error
+		ret, res, err = f()
+		return err
 	}
 
 	b := backoff.NewExponentialBackOff()
-	b.MaxElapsedTime = g.config.GetTimeout()
+	b.MaxElapsedTime = j.config.GetTimeout()
 
 	backoffErr := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
 		// Round to a whole number of milliseconds
@@ -360,11 +360,8 @@ func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})
-	if backoffErr != nil {
-		return nil, nil, backoffErr
-	}
 
-	return ret, res, reqErr
+	return ret, res, backoffErr
 }
 
 // dryrunJIRAClient is an implementation of JIRAClient which performs all
@@ -613,15 +610,15 @@ func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error))
 
 	var ret interface{}
 	var res *jira.Response
-	var reqErr error
 
 	op := func() error {
-		ret, res, reqErr = f()
-		return reqErr
+		var err error
+		ret, res, err = f()
+		return err
 	}
 
 	b := backoff.NewExponentialBackOff()
-	b.MaxElapsedTime = g.config.GetTimeout()
+	b.MaxElapsedTime = j.config.GetTimeout()
 
 	backoffErr := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
 		// Round to a whole number of milliseconds
@@ -630,9 +627,6 @@ func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error))
 
 		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
 	})
-	if backoffErr != nil {
-		return nil, nil, backoffErr
-	}
 
-	return ret, res, reqErr
+	return ret, res, backoffErr
 }
