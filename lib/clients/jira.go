@@ -56,11 +56,11 @@ type JIRAClient interface {
 // on the configuration; currently, it creates either a standard
 // clients, or a dry-run clients.
 func NewJIRAClient(config *cfg.Config) (JIRAClient, error) {
-	log := config.GetLogger()
+	log := (*config).GetLogger()
 
 	var oauth *http.Client
 	var err error
-	if !config.IsBasicAuth() {
+	if !(*config).IsBasicAuth() {
 		oauth, err = newJIRAHTTPClient(*config)
 		if err != nil {
 			log.Errorf("Error getting OAuth config: %v", err)
@@ -70,21 +70,24 @@ func NewJIRAClient(config *cfg.Config) (JIRAClient, error) {
 
 	var j JIRAClient
 
-	client, err := jira.NewClient(oauth, config.GetConfigString("jira-uri"))
+	client, err := jira.NewClient(oauth, (*config).GetConfigString("jira-uri"))
 	if err != nil {
 		log.Errorf("Error initializing JIRA clients; check your base URI. Error: %v", err)
 		return dryrunJIRAClient{}, err
 	}
 
-	if config.IsBasicAuth() {
-		client.Authentication.SetBasicAuth(config.GetConfigString("jira-user"), config.GetConfigString("jira-pass"))
+	if (*config).IsBasicAuth() {
+		client.Authentication.SetBasicAuth((*config).GetConfigString("jira-user"), (*config).GetConfigString("jira-pass"))
 	}
 
 	log.Debug("JIRA clients initialized")
 
-	config.LoadJIRAConfig(*client)
+	*config, err = (*config).LoadJIRAConfig(*client)
+	if err != nil {
+		return dryrunJIRAClient{}, err
+	}
 
-	if config.IsDryRun() {
+	if (*config).IsDryRun() {
 		j = dryrunJIRAClient{
 			config: *config,
 			client: *client,

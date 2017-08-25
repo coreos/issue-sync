@@ -39,7 +39,7 @@ var RootCmd = &cobra.Command{
 			return err
 		}
 
-		if err := lib.CompareIssues(config, ghClient, jiraClient); err != nil {
+		if err := lib.CollectIssues(config, ghClient, jiraClient); err != nil {
 			return err
 		}
 

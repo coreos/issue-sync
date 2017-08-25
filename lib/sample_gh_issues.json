@@ -1,0 +1,70 @@
+[
+  {
+    "id": 1,
+    "number": 1,
+    "state":  "open",
+    "title":  "Test Issue 1",
+    "body":   "First issue used for testing",
+    "user": {
+      "id": 1,
+      "login": "tester",
+      "name": "Test User",
+      "html_url": "http://example.com/tester"
+    },
+    "labels": [
+      {
+        "id":   1,
+        "name": "label1"
+      }
+    ],
+    "comments": 2
+  },
+  {
+    "id":     2,
+    "number": 2,
+    "state":  "open",
+    "title":  "Test Issue 2",
+    "body":   "Second issue used for testing, which has been changed",
+    "user": {
+      "id":      2,
+      "login":   "testguy",
+      "name":    "Another Test User",
+      "html_url": "http://example.com/testguy"
+    },
+    "labels": [
+      {
+        "id":   2,
+        "name": "label2"
+      },
+      {
+        "id":   4,
+        "name": "label4"
+      }
+    ],
+    "comments": 1
+  },
+  {
+    "id":     3,
+    "number": 3,
+    "state":  "closed",
+    "title":  "Test Issue 3",
+    "body":   "Third issue used for testing",
+    "user": {
+      "id":      3,
+      "login":   "test3",
+      "name":    "Third Test User",
+      "html_url": "http://example.com/test3"
+    },
+    "labels": [
+      {
+        "id":   1,
+        "name": "label1"
+      },
+      {
+        "id":   4,
+        "name": "label4"
+      }
+    ],
+    "comments": 1
+  }
+]
