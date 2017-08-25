@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"os"
+	"strings"
 	"testing"
 	"time"
-
-	"fmt"
 
 	"github.com/andygrunwald/go-jira"
 	"github.com/coreos/issue-sync/lib/clients"
@@ -21,6 +20,8 @@ import (
  * been copied. The second issue has a matching, but outdated, JIRA issue, so it will be updated.
  * The third issue has no JIRA issue, so a new one will be created.
  */
+
+const defaultLastUpdate = "2017-08-21T00:00:00Z"
 
 var ghIssues []github.Issue
 
@@ -43,12 +44,12 @@ var jiraIssues = []jira.Issue{
 				},
 			},
 			Unknowns: map[string]interface{}{
-				fmt.Sprintf("customfield_%s", ghIDFieldID):         int64(1),
-				fmt.Sprintf("customfield_%s", ghNumberFieldID):     int64(1),
-				fmt.Sprintf("customfield_%s", ghLabelsFieldID):     "label1",
-				fmt.Sprintf("customfield_%s", ghStatusFieldID):     "open",
-				fmt.Sprintf("customfield_%s", ghReporterFieldID):   "tester",
-				fmt.Sprintf("customfield_%s", isLastUpdateFieldID): "2017-08-21T00:00:00Z",
+				ghIDFieldKey:         int64(1),
+				ghNumberFieldKey:     int64(1),
+				ghLabelsFieldKey:     "label1",
+				ghStatusFieldKey:     "open",
+				ghReporterFieldKey:   "tester",
+				isLastUpdateFieldKey: defaultLastUpdate,
 			},
 		},
 	},
@@ -68,12 +69,12 @@ var jiraIssues = []jira.Issue{
 				},
 			},
 			Unknowns: map[string]interface{}{
-				fmt.Sprintf("customfield_%s", ghIDFieldID):         int64(2),
-				fmt.Sprintf("customfield_%s", ghNumberFieldID):     int64(2),
-				fmt.Sprintf("customfield_%s", ghLabelsFieldID):     "label2,label3",
-				fmt.Sprintf("customfield_%s", ghStatusFieldID):     "open",
-				fmt.Sprintf("customfield_%s", ghReporterFieldID):   "testguy",
-				fmt.Sprintf("customfield_%s", isLastUpdateFieldID): "2017-08-21T00:00:00Z",
+				ghIDFieldKey:         int64(2),
+				ghNumberFieldKey:     int64(2),
+				ghLabelsFieldKey:     "label2,label3",
+				ghStatusFieldKey:     "open",
+				ghReporterFieldKey:   "testguy",
+				isLastUpdateFieldKey: defaultLastUpdate,
 			},
 		},
 	},
@@ -124,11 +125,11 @@ type testJIRAClient struct {
 	UpdatedComments []comment
 }
 
-func (testJIRAClient) ListIssues(ids []int) ([]jira.Issue, error) {
+func (*testJIRAClient) ListIssues(ids []int) ([]jira.Issue, error) {
 	return jiraIssues, nil
 }
 
-func (testJIRAClient) GetIssue(key string) (jira.Issue, error) {
+func (*testJIRAClient) GetIssue(key string) (jira.Issue, error) {
 	for _, v := range jiraIssues {
 		if v.Key == key {
 			return v, nil
@@ -137,17 +138,17 @@ func (testJIRAClient) GetIssue(key string) (jira.Issue, error) {
 	return jira.Issue{}, nil
 }
 
-func (j testJIRAClient) CreateIssue(issue jira.Issue) (jira.Issue, error) {
+func (j *testJIRAClient) CreateIssue(issue jira.Issue) (jira.Issue, error) {
 	j.CreatedIssues = append(j.CreatedIssues, issue)
 	return issue, nil
 }
 
-func (j testJIRAClient) UpdateIssue(issue jira.Issue) (jira.Issue, error) {
+func (j *testJIRAClient) UpdateIssue(issue jira.Issue) (jira.Issue, error) {
 	j.UpdatedIssues = append(j.UpdatedIssues, issue)
 	return issue, nil
 }
 
-func (j testJIRAClient) CreateComment(issue jira.Issue, cmnt github.IssueComment, github clients.GitHubClient) (jira.Comment, error) {
+func (j *testJIRAClient) CreateComment(issue jira.Issue, cmnt github.IssueComment, github clients.GitHubClient) (jira.Comment, error) {
 	j.CreatedComments = append(j.CreatedComments, comment{
 		Issue:     issue,
 		ID:        "",
@@ -157,7 +158,7 @@ func (j testJIRAClient) CreateComment(issue jira.Issue, cmnt github.IssueComment
 	return jira.Comment{}, nil
 }
 
-func (j testJIRAClient) UpdateComment(issue jira.Issue, id string, cmnt github.IssueComment, github clients.GitHubClient) (jira.Comment, error) {
+func (j *testJIRAClient) UpdateComment(issue jira.Issue, id string, cmnt github.IssueComment, github clients.GitHubClient) (jira.Comment, error) {
 	j.UpdatedComments = append(j.UpdatedComments, comment{
 		Issue:     issue,
 		ID:        id,
@@ -193,13 +194,55 @@ func setup() error {
 	return err
 }
 
+func TestDidIssueChange_Same(t *testing.T) {
+	setup()
+
+	if err := setup(); err != nil {
+		t.Fatalf("Error running setup: %v", err)
+	}
+
+	config := NewTestConfig()
+
+	pair := issuePair{
+		gh: ghIssues[0],
+		j:  jiraIssues[0],
+	}
+
+	if DidIssueChange(config, pair) {
+		t.Errorf("Issue did change?")
+		t.Errorf("%+v", pair.gh)
+		t.Errorf("%+v", pair.j)
+	}
+}
+
+func TestDidIssueChange_Different(t *testing.T) {
+	setup()
+
+	if err := setup(); err != nil {
+		t.Fatalf("Error running setup: %v", err)
+	}
+
+	config := NewTestConfig()
+
+	pair := issuePair{
+		gh: ghIssues[1],
+		j:  jiraIssues[1],
+	}
+
+	if !DidIssueChange(config, pair) {
+		t.Errorf("Issue did not change?")
+		t.Errorf("%+v", pair.gh)
+		t.Errorf("%+v", pair.j)
+	}
+}
+
 func TestCompareIssues(t *testing.T) {
 	if err := setup(); err != nil {
 		t.Fatalf("Error running setup: %v", err)
 	}
 
 	gh := testGHClient{}
-	jc := testJIRAClient{}
+	jc := &testJIRAClient{}
 
 	config := NewTestConfig()
 
@@ -223,5 +266,113 @@ func TestCompareIssues(t *testing.T) {
 	}
 	if creates[0].ID != ghIssues[2].ID {
 		t.Errorf("Create issue ID wrong: expected %d; got %d", ghIssues[2].ID, creates[0].ID)
+	}
+}
+
+func TestCreateIssue(t *testing.T) {
+	setup()
+
+	if err := setup(); err != nil {
+		t.Fatalf("Error running setup: %v", err)
+	}
+
+	gh := testGHClient{}
+	jc := &testJIRAClient{}
+
+	config := NewTestConfig()
+
+	issue := ghIssues[2]
+
+	err := CreateIssue(config, issue, gh, jc)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	if len(jc.CreatedIssues) != 1 {
+		t.Fatalf("Wrong number of created issues: expected 1; got %d", len(jc.CreatedIssues))
+	}
+
+	i := jc.CreatedIssues[0].Fields
+	if i.Summary != issue.GetTitle() {
+		t.Errorf("Summary is wrong: expected %s; got %s", issue.GetTitle(), i.Summary)
+	}
+	if i.Description != issue.GetBody() {
+		t.Errorf("Description is wrong: expected %s; got %s", issue.GetBody(), i.Description)
+	}
+	if i.Unknowns[ghIDFieldKey] != issue.GetID() {
+		t.Errorf("GitHub ID is wrong: expected %d; got %d", issue.GetID(), i.Unknowns[ghIDFieldKey])
+	}
+	if i.Unknowns[ghNumberFieldKey] != issue.GetNumber() {
+		t.Errorf("GitHub Number is wrong: expected %d; got %d", issue.GetNumber(), i.Unknowns[ghNumberFieldKey])
+	}
+	labels := make([]string, len(issue.Labels))
+	for i, v := range issue.Labels {
+		labels[i] = v.GetName()
+	}
+	if i.Unknowns[ghLabelsFieldKey] != strings.Join(labels, ",") {
+		t.Errorf("GitHub Labels are wrong: expected %s; got %s", strings.Join(labels, ","), i.Unknowns[ghLabelsFieldKey])
+	}
+	if i.Unknowns[ghStatusFieldKey] != issue.GetState() {
+		t.Errorf("GitHub Status is wrong: expected %s; got %s", issue.GetState(), i.Unknowns[ghStatusFieldKey])
+	}
+	if i.Unknowns[ghReporterFieldKey] != issue.User.GetLogin() {
+		t.Errorf("GitHub Reporter is wrong: expected %s; got %s", issue.User.GetLogin(), i.Unknowns[ghReporterFieldKey])
+	}
+	if i.Unknowns[isLastUpdateFieldKey] != time.Now().Format(dateFormat) {
+		t.Errorf("Last Update is wrong: expected %s; got %s", time.Now().Format(dateFormat), i.Unknowns[isLastUpdateFieldKey])
+	}
+}
+
+func TestUpdateIssue(t *testing.T) {
+	setup()
+
+	if err := setup(); err != nil {
+		t.Fatalf("Error running setup: %v", err)
+	}
+
+	gh := testGHClient{}
+	jc := &testJIRAClient{}
+
+	config := NewTestConfig()
+
+	ghIssue := ghIssues[1]
+	jIssue := jiraIssues[1]
+
+	pair := issuePair{
+		gh: ghIssue,
+		j:  jIssue,
+	}
+
+	err := UpdateIssue(config, pair, gh, jc)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	if len(jc.UpdatedIssues) != 1 {
+		t.Fatalf("Wrong number of created issues: expected 1; got %d", len(jc.CreatedIssues))
+	}
+
+	i := jc.UpdatedIssues[0].Fields
+	if i.Summary != ghIssue.GetTitle() {
+		t.Errorf("Summary is wrong: expected %s; got %s", ghIssue.GetTitle(), i.Summary)
+	}
+	if i.Description != ghIssue.GetBody() {
+		t.Errorf("Description is wrong: expected %s; got %s", ghIssue.GetBody(), i.Description)
+	}
+	labels := make([]string, len(ghIssue.Labels))
+	for i, v := range ghIssue.Labels {
+		labels[i] = v.GetName()
+	}
+	if i.Unknowns[ghLabelsFieldKey] != strings.Join(labels, ",") {
+		t.Errorf("GitHub Labels are wrong: expected %s; got %s", strings.Join(labels, ","), i.Unknowns[ghLabelsFieldKey])
+	}
+	if i.Unknowns[ghStatusFieldKey] != ghIssue.GetState() {
+		t.Errorf("GitHub Status is wrong: expected %s; got %s", ghIssue.GetState(), i.Unknowns[ghStatusFieldKey])
+	}
+	if i.Unknowns[ghReporterFieldKey] != ghIssue.User.GetLogin() {
+		t.Errorf("GitHub Reporter is wrong: expected %s; got %s", ghIssue.User.GetLogin(), i.Unknowns[ghReporterFieldKey])
+	}
+	if i.Unknowns[isLastUpdateFieldKey] != time.Now().Format(dateFormat) {
+		t.Errorf("Last Update is wrong: expected %s; got %s", time.Now().Format(dateFormat), i.Unknowns[isLastUpdateFieldKey])
 	}
 }

@@ -21,6 +21,13 @@ const ghStatusFieldID = "10104"
 const ghReporterFieldID = "10105"
 const isLastUpdateFieldID = "10106"
 
+const ghIDFieldKey = "customfield_10101"
+const ghNumberFieldKey = "customfield_10102"
+const ghLabelsFieldKey = "customfield_10103"
+const ghStatusFieldKey = "customfield_10104"
+const ghReporterFieldKey = "customfield_10105"
+const isLastUpdateFieldKey = "customfield_10106"
+
 func NewTestConfig() cfg.Config {
 	var config cfg.Config
 	config = testConfig{
