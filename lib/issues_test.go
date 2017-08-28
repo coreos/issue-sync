@@ -37,9 +37,15 @@ var jiraIssues = []jira.Issue{
 				Comments: []*jira.Comment{
 					{
 						ID: "10002",
-						Body: "Comment ([ID 10|http://example.com/comment/10]) from GitHub User " +
+						Body: "Comment [(ID 10)|http://example.com/comment/10] from GitHub user " +
 							"[tester|http://example.com/tester] (Test User) at 12:00 PM, August 22 2017:\n\n" +
 							"First comment on the first issue!",
+					},
+					{
+						ID: "10005",
+						Body: "Comment [(ID 12)|http://example.com/comment/12] from GitHub user " +
+							"[tester|http://example.com/tester] (Test user) at 15:00 PM, August 22 2017:\n\n" +
+							"Second comment on the first issue!",
 					},
 				},
 			},
@@ -54,15 +60,15 @@ var jiraIssues = []jira.Issue{
 		},
 	},
 	{
-		ID: "10002",
+		ID: "10003",
 		Fields: &jira.IssueFields{
 			Summary:     "Test Issue 2",
 			Description: "Second issue used for testing",
 			Comments: &jira.Comments{
 				Comments: []*jira.Comment{
 					{
-						ID: "10002",
-						Body: "Comment ([ID 11|http://example.com/comment/11]) from GitHub User " +
+						ID: "10004",
+						Body: "Comment [(ID 11)|http://example.com/comment/11] from GitHub user " +
 							"[testguy|http://example.com/testguy] (Another Test User) at 18:00 PM, August 22 2017:\n\n" +
 							"First comment on the second issue!",
 					},
