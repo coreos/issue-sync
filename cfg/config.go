@@ -514,3 +514,15 @@ func (c realConfig) getFieldIDs(client jira.Client) (fields, error) {
 
 	return fieldIDs, nil
 }
+
+func CreateTestConfig(v viper.Viper) Config {
+	return realConfig{
+		cmdFile: "",
+		cmdConfig: v,
+		log: *logrus.New().WithField("app-name", "issue-sync-test"),
+		basicAuth: false,
+		fieldIDs: fields{},
+		project: jira.Project{},
+		since: time.Date(2017, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+}
