@@ -27,14 +27,25 @@ func CollectIssues(config cfg.Config, ghClient clients.GitHubClient, jiraClient 
 	}
 
 	for _, v := range update {
-		if err = UpdateIssue(config, v, ghClient, jiraClient); err != nil {
-			log.Errorf("Error updating issue: %v", err)
+		if DidIssueChange(config, v) {
+			if err = UpdateIssue(config, v, jiraClient); err != nil {
+				log.Errorf("Error updating issue: %v", err)
+				continue
+			}
+		}
+		if err = CompareComments(config, v.gh, v.j, ghClient, jiraClient); err != nil {
+			log.Errorf("Error comparing comments: %v", err)
 		}
 	}
 
 	for _, v := range create {
-		if err = CreateIssue(config, v, ghClient, jiraClient); err != nil {
+		jIssue, err := CreateIssue(config, v, jiraClient)
+		if err != nil {
 			log.Errorf("Error creating issue: %v", err)
+			continue
+		}
+		if err = CompareComments(config, v, jIssue, ghClient, jiraClient); err != nil {
+			log.Errorf("Error comparing comments: %v", err)
 		}
 	}
 
@@ -85,9 +96,7 @@ func CompareIssues(config cfg.Config, ghClient clients.GitHubClient, jiraClient 
 					gh: ghIssue,
 					j:  jIssue,
 				}
-				if DidIssueChange(config, pair) {
-					updatePairs = append(updatePairs, pair)
-				}
+				updatePairs = append(updatePairs, pair)
 				break
 			}
 		}
@@ -137,7 +146,7 @@ func DidIssueChange(config cfg.Config, issues issuePair) bool {
 		anyDifferent = true
 	}
 
-	log.Debugf("Issues have any differences: %b", anyDifferent)
+	log.Debugf("Issues have any differences: %t", anyDifferent)
 
 	return anyDifferent
 }
@@ -145,7 +154,7 @@ func DidIssueChange(config cfg.Config, issues issuePair) bool {
 // UpdateIssue compares each field of a GitHub issue to a JIRA issue; if any of them
 // differ, the differing fields of the JIRA issue are updated to match the GitHub
 // issue.
-func UpdateIssue(config cfg.Config, issues issuePair, ghClient clients.GitHubClient, jClient clients.JIRAClient) error {
+func UpdateIssue(config cfg.Config, issues issuePair, jClient clients.JIRAClient) error {
 	log := config.GetLogger()
 
 	ghIssue := issues.gh
@@ -197,16 +206,12 @@ func UpdateIssue(config cfg.Config, issues issuePair, ghClient clients.GitHubCli
 		return err
 	}
 
-	if err := CompareComments(config, ghIssue, issue, ghClient, jClient); err != nil {
-		return err
-	}
-
 	return nil
 }
 
 // CreateIssue generates a JIRA issue from the various fields on the given GitHub issue, then
 // sends it to the JIRA API.
-func CreateIssue(config cfg.Config, issue github.Issue, ghClient clients.GitHubClient, jClient clients.JIRAClient) error {
+func CreateIssue(config cfg.Config, issue github.Issue, jClient clients.JIRAClient) (jira.Issue, error) {
 	log := config.GetLogger()
 
 	log.Debugf("Creating JIRA issue based on GitHub issue #%d", *issue.Number)
@@ -240,19 +245,15 @@ func CreateIssue(config cfg.Config, issue github.Issue, ghClient clients.GitHubC
 
 	jIssue, err := jClient.CreateIssue(jIssue)
 	if err != nil {
-		return err
+		return jira.Issue{}, err
 	}
 
 	jIssue, err = jClient.GetIssue(jIssue.Key)
 	if err != nil {
-		return err
+		return jira.Issue{}, err
 	}
 
 	log.Debugf("Created JIRA issue %s!", jIssue.Key)
 
-	if err := CompareComments(config, issue, jIssue, ghClient, jClient); err != nil {
-		return err
-	}
-
-	return nil
+	return jIssue, nil
 }

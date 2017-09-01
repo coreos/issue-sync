@@ -379,16 +379,6 @@ func (c *realConfig) validateConfig() error {
 	} else {
 		c.log.Debug("Using OAuth 1.0a authentication")
 
-		token := c.cmdConfig.GetString("jira-token")
-		if token == "" {
-			return errors.New("JIRA access token required")
-		}
-
-		secret := c.cmdConfig.GetString("jira-secret")
-		if secret == "" {
-			return errors.New("JIRA access token secret required")
-		}
-
 		consumerKey := c.cmdConfig.GetString("jira-consumer-key")
 		if consumerKey == "" {
 			return errors.New("JIRA consumer key required for OAuth handshake")

@@ -302,7 +302,7 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 		comment.GetBody(),
 	)
 
-	if len(body) < maxBodyLength {
+	if len(body) > maxBodyLength {
 		body = body[:maxBodyLength]
 	}
 
@@ -321,8 +321,9 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 	}
 
 	com, res, err := j.request(func() (interface{}, *jira.Response, error) {
-		res, err := j.client.Do(req, nil)
-		return nil, res, err
+		var co *jira.Comment
+		res, err := j.client.Do(req, co)
+		return co, res, err
 	})
 	if err != nil {
 		log.Errorf("Error updating comment: %v", err)
