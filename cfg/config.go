@@ -317,30 +317,110 @@ func newLogger(app, level string) *logrus.Entry {
 	return logEntry
 }
 
+type configVar struct {
+	Name     string
+	Type     string
+	Required bool
+}
+
+var vars = []configVar{
+	{
+		Name:     "github-token",
+		Type:     "string",
+		Required: true,
+	},
+	{
+		Name:     "repo-name",
+		Type:     "string",
+		Required: true,
+	},
+	{
+		Name:     "jira-uri",
+		Type:     "string",
+		Required: true,
+	},
+	{
+		Name:     "jira-project",
+		Type:     "string",
+		Required: true,
+	},
+	{
+		Name:     "since",
+		Type:     "string",
+		Required: false,
+	},
+	{
+		Name:     "timeout",
+		Type:     "float64",
+		Required: false,
+	},
+}
+
 // validateConfig checks the values provided to all of the configuration
 // options, ensuring that e.g. `since` is a valid date, `jira-uri` is a
 // real URI, etc. This is the first level of checking. It does not confirm
 // if a JIRA cli is running at `jira-uri` for example; that is checked
 // in getJIRAClient when we actually make a call to the API.
 func (c *Config) validateConfig() error {
-	// Log level and config file location are validated already
-
-	c.log.Debug("Checking config variables...")
-	token := c.cmdConfig.GetString("github-token")
-	if token == "" {
-		return errors.New("GitHub token required")
-	}
-
 	c.basicAuth = (c.cmdConfig.GetString("jira-user") != "") && (c.cmdConfig.GetString("jira-pass") != "")
 
 	if c.basicAuth {
 		c.log.Debug("Using HTTP Basic Authentication")
 
-		jUser := c.cmdConfig.GetString("jira-user")
-		if jUser == "" {
-			return errors.New("Jira username required")
-		}
+		vars = append(vars, []configVar{
+			{
+				Name:     "jira-user",
+				Type:     "string",
+				Required: true,
+			},
+			{
+				Name:     "jira-pass",
+				Type:     "string",
+				Required: false,
+			},
+		}...)
+	} else {
+		c.log.Debug("Using OAuth 1.0a authentication")
 
+		vars = append(vars, []configVar{
+			{
+				Name:     "jira-token",
+				Type:     "string",
+				Required: true,
+			},
+			{
+				Name:     "jira-secret",
+				Type:     "string",
+				Required: true,
+			},
+			{
+				Name:     "jira-consumer-key",
+				Type:     "string",
+				Required: true,
+			},
+			{
+				Name:     "jira-private-key",
+				Type:     "string",
+				Required: true,
+			},
+		}...)
+	}
+
+	for _, v := range vars {
+		val := c.cmdConfig.Get(v.Name)
+		if val != "" {
+			typ := fmt.Sprintf("%T", val)
+			if typ != v.Type {
+				return fmt.Errorf("Config value %q must be %q, but was %q", v.Name, v.Type, typ)
+			}
+		} else {
+			if v.Required {
+				return fmt.Errorf("Config value %q was empty, but is required", v.Name)
+			}
+		}
+	}
+
+	if c.basicAuth {
 		jPass := c.cmdConfig.GetString("jira-pass")
 		if jPass == "" {
 			fmt.Print("Enter your JIRA password: ")
@@ -352,28 +432,7 @@ func (c *Config) validateConfig() error {
 			c.cmdConfig.Set("jira-pass", string(bytePass))
 		}
 	} else {
-		c.log.Debug("Using OAuth 1.0a authentication")
-
-		token := c.cmdConfig.GetString("jira-token")
-		if token == "" {
-			return errors.New("JIRA access token required")
-		}
-
-		secret := c.cmdConfig.GetString("jira-secret")
-		if secret == "" {
-			return errors.New("JIRA access token secret required")
-		}
-
-		consumerKey := c.cmdConfig.GetString("jira-consumer-key")
-		if consumerKey == "" {
-			return errors.New("JIRA consumer key required for OAuth handshake")
-		}
-
 		privateKey := c.cmdConfig.GetString("jira-private-key")
-		if privateKey == "" {
-			return errors.New("JIRA private key required for OAuth handshake")
-		}
-
 		_, err := os.Open(privateKey)
 		if err != nil {
 			return errors.New("JIRA private key must point to existing PEM file")
@@ -381,24 +440,13 @@ func (c *Config) validateConfig() error {
 	}
 
 	repo := c.cmdConfig.GetString("repo-name")
-	if repo == "" {
-		return errors.New("GitHub repository required")
-	}
 	if !strings.Contains(repo, "/") || len(strings.Split(repo, "/")) != 2 {
 		return errors.New("GitHub repository must be of form user/repo")
 	}
 
 	uri := c.cmdConfig.GetString("jira-uri")
-	if uri == "" {
-		return errors.New("JIRA URI required")
-	}
 	if _, err := url.ParseRequestURI(uri); err != nil {
 		return errors.New("JIRA URI must be valid URI")
-	}
-
-	project := c.cmdConfig.GetString("jira-project")
-	if project == "" {
-		return errors.New("JIRA project required")
 	}
 
 	sinceStr := c.cmdConfig.GetString("since")
