@@ -317,12 +317,16 @@ func newLogger(app, level string) *logrus.Entry {
 	return logEntry
 }
 
+// configVar represents a single configuration variable, and
+// the data necessary to validate it.
 type configVar struct {
 	Name     string
 	Type     string
 	Required bool
 }
 
+// vars is the list of valid configuration variables, which can
+// be iterated over to check the whole config.
 var vars = []configVar{
 	{
 		Name:     "github-token",
@@ -354,6 +358,27 @@ var vars = []configVar{
 		Type:     "float64",
 		Required: false,
 	},
+}
+
+// validateVars checks each of the configuration variables,
+// checking that they're not nil/zero/empty if they're
+// required, and that their type is correct.
+func (c Config) validateVars() error {
+	for _, v := range vars {
+		val := c.cmdConfig.Get(v.Name)
+		if val != "" {
+			typ := fmt.Sprintf("%T", val)
+			if typ != v.Type {
+				return fmt.Errorf("Config value %q must be %q, but was %q", v.Name, v.Type, typ)
+			}
+		} else {
+			if v.Required {
+				return fmt.Errorf("Config value %q was empty, but is required", v.Name)
+			}
+		}
+	}
+
+	return nil
 }
 
 // validateConfig checks the values provided to all of the configuration
@@ -406,18 +431,8 @@ func (c *Config) validateConfig() error {
 		}...)
 	}
 
-	for _, v := range vars {
-		val := c.cmdConfig.Get(v.Name)
-		if val != "" {
-			typ := fmt.Sprintf("%T", val)
-			if typ != v.Type {
-				return fmt.Errorf("Config value %q must be %q, but was %q", v.Name, v.Type, typ)
-			}
-		} else {
-			if v.Required {
-				return fmt.Errorf("Config value %q was empty, but is required", v.Name)
-			}
-		}
+	if err := c.validateVars(); err != nil {
+		return err
 	}
 
 	if c.basicAuth {
