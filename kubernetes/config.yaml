@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Configmap
+metadata:
+  name: issue-sync
+type: Opaque
+data:
+  log-level:
+  jira-uri:
+  repo-name:
+  jira-project:
+  timeout:
+  period:

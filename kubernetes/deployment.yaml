@@ -1,0 +1,95 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: issue-sync
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: issue-sync
+    spec:
+      containers:
+      - name: issue-sync
+        image: quay.io/coreos/issue-sync:v0.2.0
+        command: ["/bin/sh"]
+        args: ["-c", "while true; do ./issue-sync --config config.json; sleep $(ISSUE_SYNC_PERIOD); done"]
+        env:
+          - name: ISSUE_SYNC_PERIOD
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: period
+          - name: ISSUE_SYNC_LOG_LEVEL
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: log-level
+          - name: ISSUE_SYNC_GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: issue-sync
+                key: github-token
+          - name: ISSUE_SYNC_JIRA_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: issue-sync
+                key: jira-token
+          - name: ISSUE_SYNC_JIRA_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: issue-sync
+                key: jira-secret
+          - name: ISSUE_SYNC_JIRA_CONSUMER_KEY
+            valueFrom:
+              secretKeyRef:
+                name: issue-sync
+                key: jira-consumer-key
+          - name: ISSUE_SYNC_JIRA_PRIVATE_KEY_PATH
+            valueFrom:
+              secretKeyRef:
+                name: issue-sync
+                key: jira-private-key-path
+          - name: ISSUE_SYNC_JIRA_URI
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: jira-uri
+          - name: ISSUE_SYNC_REPO_NAME
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: repo-name
+          - name: ISSUE_SYNC_JIRA_PROJECT
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: jira-private-key
+          - name: ISSUE_SYNC_JIRA_URI
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: jira-uri
+          - name: ISSUE_SYNC_REPO_NAME
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: repo-name
+          - name: ISSUE_SYNC_JIRA_PROJECT
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: jira-project
+          - name: ISSUE_SYNC_TIMEOUT
+            valueFrom:
+              configMapKeyRef:
+                name: issue-sync
+                key: timeout
+        volumeMounts:
+        - name: key
+          mountPath: /opt/issue-sync/config
+          readOnly: true
+      volumes:
+      - name: key
+        secret:
+          secretName: privatekey

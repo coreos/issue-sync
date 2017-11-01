@@ -43,7 +43,7 @@ func newJIRAHTTPClient(config cfg.Config) (*http.Client, error) {
 // configuration, and creates an OAuth configuration which can
 // be used to begin a handshake.
 func oauthConfig(config cfg.Config) (oauth1.Config, error) {
-	pvtKeyPath := config.GetConfigString("jira-private-key")
+	pvtKeyPath := config.GetConfigString("jira-private-key-path")
 
 	pvtKeyFile, err := os.Open(pvtKeyPath)
 	if err != nil {
