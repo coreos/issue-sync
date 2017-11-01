@@ -30,24 +30,31 @@ var RootCmd = &cobra.Command{
 			return err
 		}
 
-		ghClient, err := clients.NewGitHubClient(config)
-		if err != nil {
-			return err
-		}
+		log := config.GetLogger()
+
 		jiraClient, err := clients.NewJIRAClient(&config)
 		if err != nil {
 			return err
 		}
-
-		if err := lib.CompareIssues(config, ghClient, jiraClient); err != nil {
+		ghClient, err := clients.NewGitHubClient(config)
+		if err != nil {
 			return err
 		}
 
-		if !config.IsDryRun() {
-			return config.SaveConfig()
+		for {
+			if err := lib.CompareIssues(config, ghClient, jiraClient); err != nil {
+				log.Error(err)
+			}
+			if !config.IsDryRun() {
+				if err := config.SaveConfig(); err != nil {
+					log.Error(err)
+				}
+			}
+			if !config.IsDaemon() {
+				return nil
+			}
+			<-time.After(config.GetDaemonPeriod())
 		}
-
-		return nil
 	},
 }
 
@@ -63,4 +70,5 @@ func init() {
 	RootCmd.PersistentFlags().StringP("since", "s", "1970-01-01T00:00:00+0000", "Set the day that the update should run forward from")
 	RootCmd.PersistentFlags().BoolP("dry-run", "d", false, "Print out actions to be taken, but do not execute them")
 	RootCmd.PersistentFlags().DurationP("timeout", "T", time.Minute, "Set the maximum timeout on all API calls")
+	RootCmd.PersistentFlags().Duration("period", 1*time.Hour, "How often to synchronize; set to 0 for one-shot mode")
 }
