@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"time"
+
 	"github.com/cenkalti/backoff"
 	"github.com/coreos/issue-sync/cfg"
 	"github.com/google/go-github/github"
@@ -149,17 +151,21 @@ func (g realGHClient) GetRateLimits() (github.RateLimits, error) {
 	return *rate, nil
 }
 
+const retryBackoffRoundRatio = time.Millisecond / time.Nanosecond
+
 // request takes an API function from the GitHub library
 // and calls it with exponential backoff. If the function succeeds, it
 // returns the expected value and the GitHub API response, as well as a nil
 // error. If it continues to fail until a maximum time is reached, it returns
 // a nil result as well as the returned HTTP response and a timeout error.
 func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (interface{}, *github.Response, error) {
+	log := g.config.GetLogger()
+
 	var ret interface{}
 	var res *github.Response
-	var err error
 
 	op := func() error {
+		var err error
 		ret, res, err = f()
 		return err
 	}
@@ -167,12 +173,15 @@ func (g realGHClient) request(f func() (interface{}, *github.Response, error)) (
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = g.config.GetTimeout()
 
-	er := backoff.Retry(op, b)
-	if er != nil {
-		return nil, nil, er
-	}
+	backoffErr := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+		// Round to a whole number of milliseconds
+		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
+		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
-	return ret, res, err
+		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
+	})
+
+	return ret, res, backoffErr
 }
 
 // NewGitHubClient creates a GitHubClient and returns it; which

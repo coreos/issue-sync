@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 
+	"time"
+
 	"github.com/andygrunwald/go-jira"
 	"github.com/cenkalti/backoff"
 	"github.com/coreos/issue-sync/cfg"
@@ -339,11 +341,13 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 // error. If it continues to fail until a maximum time is reached, it returns
 // a nil result as well as the returned HTTP response and a timeout error.
 func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (interface{}, *jira.Response, error) {
+	log := j.config.GetLogger()
+
 	var ret interface{}
 	var res *jira.Response
-	var err error
 
 	op := func() error {
+		var err error
 		ret, res, err = f()
 		return err
 	}
@@ -351,12 +355,15 @@ func (j realJIRAClient) request(f func() (interface{}, *jira.Response, error)) (
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = j.config.GetTimeout()
 
-	er := backoff.Retry(op, b)
-	if er != nil {
-		return ret, res, er
-	}
+	backoffErr := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+		// Round to a whole number of milliseconds
+		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
+		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
-	return ret, res, err
+		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
+	})
+
+	return ret, res, backoffErr
 }
 
 // dryrunJIRAClient is an implementation of JIRAClient which performs all
@@ -601,11 +608,13 @@ func (j dryrunJIRAClient) UpdateComment(issue jira.Issue, id string, comment git
 //
 // This function is identical to that in realJIRAClient.
 func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error)) (interface{}, *jira.Response, error) {
+	log := j.config.GetLogger()
+
 	var ret interface{}
 	var res *jira.Response
-	var err error
 
 	op := func() error {
+		var err error
 		ret, res, err = f()
 		return err
 	}
@@ -613,10 +622,13 @@ func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error))
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = j.config.GetTimeout()
 
-	er := backoff.Retry(op, b)
-	if er != nil {
-		return ret, res, er
-	}
+	backoffErr := backoff.RetryNotify(op, b, func(err error, duration time.Duration) {
+		// Round to a whole number of milliseconds
+		duration /= retryBackoffRoundRatio // Convert nanoseconds to milliseconds
+		duration *= retryBackoffRoundRatio // Convert back so it appears correct
 
-	return ret, res, err
+		log.Errorf("Error performing operation; retrying in %v: %v", duration, err)
+	})
+
+	return ret, res, backoffErr
 }
