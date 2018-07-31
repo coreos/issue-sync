@@ -11,7 +11,7 @@ import (
 )
 
 // dateFormat is the format used for the Last IS Update field
-const dateFormat = "2006-01-02T15:04:05-0700"
+const dateFormat = "2006-01-02T15:04:05.0-0700"
 
 // CompareIssues gets the list of GitHub issues updated since the `since` date,
 // gets the list of JIRA issues which have GitHub ID custom fields in that list,
