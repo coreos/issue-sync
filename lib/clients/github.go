@@ -42,7 +42,7 @@ func (g realGHClient) ListIssues() ([]github.Issue, error) {
 	pages := 1
 	var issues []github.Issue
 
-	for page := 0; page < pages; page++ {
+	for page := 1; page <= pages; page++ {
 		is, res, err := g.request(func() (interface{}, *github.Response, error) {
 			return g.client.Issues.ListByRepo(ctx, user, repo, &github.IssueListByRepoOptions{
 				Since:     g.config.GetSinceParam(),
