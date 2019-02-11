@@ -1,9 +1,11 @@
 # issue-sync
 
-Issue-sync is a tool for synchronizing GitHub and JIRA issues. It grew
+Issue-sync is a tool for mirroring GitHub issues in JIRA. It grew
 out of a desire to maintain a public GitHub repo while tracking private
 issues in a JIRA board; rather than require people to keep up with both
-sources, we decided to make *one* the single source of truth.
+sources, we decided to make *one* the single source of truth. Note that 
+issue-sync works only one way and will **NOT** mirror issues from JIRA to 
+GitHub.
 
 ## Usage
 
