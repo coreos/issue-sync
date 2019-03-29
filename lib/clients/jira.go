@@ -255,7 +255,7 @@ func (j realJIRAClient) CreateComment(issue jira.Issue, comment github.IssueComm
 		comment.GetBody(),
 	)
 
-	if len(body) >= maxBodyLength {
+	if len(body) > maxBodyLength {
 		body = body[:maxBodyLength]
 	}
 
@@ -301,7 +301,7 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 		comment.GetBody(),
 	)
 
-	if len(body) < maxBodyLength {
+	if len(body) > maxBodyLength {
 		body = body[:maxBodyLength]
 	}
 
