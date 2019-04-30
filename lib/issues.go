@@ -32,7 +32,7 @@ func CompareIssues(config cfg.Config, ghClient clients.GitHubClient, jiraClient 
 		return nil
 	}
 
-	ids := make([]int, len(ghIssues))
+	ids := make([]int64, len(ghIssues))
 	for i, v := range ghIssues {
 		ids[i] = v.GetID()
 	}

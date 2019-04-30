@@ -1,4 +1,4 @@
-// Copyright 2015-2016 trivago GmbH
+// Copyright 2015-2018 trivago N.V.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import (
 	"strconv"
 )
 
+// GetUid returns the user id for a given user name
 func GetUid(name string) (int, error) {
 	switch name {
 	case "nobody":
@@ -37,6 +38,7 @@ func GetUid(name string) (int, error) {
 	}
 }
 
+// GetGid returns the group id for a given group name
 func GetGid(name string) (int, error) {
 	switch name {
 	case "nobody":

@@ -1,4 +1,4 @@
-// Copyright 2015-2016 trivago GmbH
+// Copyright 2015-2018 trivago N.V.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,9 +18,17 @@ import (
 	"github.com/trivago/tgo/tstrings"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"syscall"
 )
+
+// URI stores parts parsed from an URI string.
+type URI struct {
+	Protocol string
+	Address  string
+	Port     uint16
+}
 
 // ParseAddress takes an address and tries to extract the protocol from it.
 // Protocols may be prepended by the "protocol://" notation.
@@ -58,6 +66,15 @@ func SplitAddress(addressString string, defaultProtocol string) (protocol, host,
 
 	host, port, err = net.SplitHostPort(host)
 	return
+}
+
+// SplitAddressToURI acts like SplitAddress but returns an URI struct instead.
+func SplitAddressToURI(addressString string, defaultProtocol string) (uri URI, err error) {
+	portString := ""
+	uri.Protocol, uri.Address, portString, err = SplitAddress(addressString, defaultProtocol)
+	portNum, _ := strconv.ParseInt(portString, 10, 16)
+	uri.Port = uint16(portNum)
+	return uri, err
 }
 
 // IsDisconnectedError returns true if the given error is related to a

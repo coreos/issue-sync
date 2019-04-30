@@ -1,4 +1,4 @@
-// Copyright 2015-2016 trivago GmbH
+// Copyright 2015-2018 trivago N.V.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,10 +17,11 @@ package tio
 import (
 	"bytes"
 	"fmt"
-	"github.com/trivago/tgo/ttesting"
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/trivago/tgo/ttesting"
 )
 
 type bufferedReaderTestData struct {
@@ -52,6 +53,75 @@ func TestBufferedReaderDelimiter(t *testing.T) {
 	msg, _, err := reader.ReadOne(parseReader)
 	data.expect.Equal(io.EOF, err)
 	data.expect.Nil(msg)
+}
+
+func TestBufferedReaderRegexStart(t *testing.T) {
+	expect := ttesting.NewExpect(t)
+	data := []string{
+		"incomplete\n",
+		"XXXX message\n",
+		"XXXX multi\nline\nmessage\n",
+		"XXXX trailing",
+	}
+
+	parseReader := strings.NewReader(strings.Join(data, ""))
+	reader := NewBufferedReader(1024, BufferedReaderFlagRegexStart, 0, "(?m)^XXXX")
+
+	parsedData := []string{}
+	err := reader.ReadAll(parseReader, func(m []byte) {
+		parsedData = append(parsedData, string(m))
+	})
+
+	expect.Equal(io.EOF, err)
+	expect.Equal(len(data)-1, len(parsedData))
+
+	expect.True(reader.HasIncompleteData())
+	parsedData = append(parsedData, string(reader.ResetGetIncomplete()))
+
+	expect.False(reader.HasIncompleteData())
+
+	for i, original := range data {
+		expect.Equal(original, parsedData[i])
+	}
+
+	msg, more, err := reader.ReadOne(parseReader)
+	expect.False(more)
+	expect.Equal(io.EOF, err)
+	expect.Nil(msg)
+}
+
+func TestBufferedReaderRegexEnd(t *testing.T) {
+	expect := ttesting.NewExpect(t)
+	data := []string{
+		"message XXXX\n",
+		"multi\nline\nmessage XXXX\n",
+		"incomplete",
+	}
+
+	parseReader := strings.NewReader(strings.Join(data, ""))
+	reader := NewBufferedReader(1024, BufferedReaderFlagRegex, 0, "XXXX\n")
+
+	parsedData := []string{}
+	err := reader.ReadAll(parseReader, func(m []byte) {
+		parsedData = append(parsedData, string(m))
+	})
+
+	expect.Equal(io.EOF, err)
+	expect.Equal(len(data)-1, len(parsedData))
+
+	expect.True(reader.HasIncompleteData())
+	parsedData = append(parsedData, string(reader.ResetGetIncomplete()))
+
+	expect.False(reader.HasIncompleteData())
+
+	for i, original := range data {
+		expect.Equal(original, parsedData[i])
+	}
+
+	msg, more, err := reader.ReadOne(parseReader)
+	expect.False(more)
+	expect.Equal(io.EOF, err)
+	expect.Nil(msg)
 }
 
 func TestBufferedReaderMLEText(t *testing.T) {

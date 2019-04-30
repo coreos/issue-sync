@@ -1,4 +1,4 @@
-// Copyright 2015-2016 trivago GmbH
+// Copyright 2015-2018 trivago N.V.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,8 +16,11 @@
 
 package tos
 
-// TODO
-/*
+// TODO:
+// - Windows uses 128-bit UUIDs
+// - Root can be mapped to administrator
+// - Nobody mapping is TBD
+
 const (
 	// NobodyUid represents the user id of the user nobody
 	NobodyUid = 0
@@ -27,4 +30,4 @@ const (
 	RootUid = 0
 	// RootUid represents the group id of the root group
 	RootGid = 0
-)*/
+)

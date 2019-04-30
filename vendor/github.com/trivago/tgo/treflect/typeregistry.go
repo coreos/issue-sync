@@ -1,4 +1,4 @@
-// Copyright 2015-2016 trivago GmbH
+// Copyright 2015-2018 trivago N.V.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,8 +34,12 @@ func NewTypeRegistry() TypeRegistry {
 }
 
 // Register a plugin to the TypeRegistry by passing an uninitialized object.
-// Example: var MyConsumerClassID = shared.Plugin.Register(MyConsumer{})
 func (registry TypeRegistry) Register(typeInstance interface{}) {
+	registry.RegisterWithDepth(typeInstance, 1)
+}
+
+// RegisterWithDepth to register a plugin to the TypeRegistry by passing an uninitialized object.
+func (registry TypeRegistry) RegisterWithDepth(typeInstance interface{}, depth int) {
 	structType := reflect.TypeOf(typeInstance)
 	packageName := structType.PkgPath()
 	typeName := structType.Name()
@@ -46,7 +50,7 @@ func (registry TypeRegistry) Register(typeInstance interface{}) {
 		maxDepth = len(pathTokens)
 	}
 
-	for n := 1; n <= maxDepth; n++ {
+	for n := depth; n <= maxDepth; n++ {
 		shortTypeName := strings.Join(pathTokens[len(pathTokens)-n:], ".") + "." + typeName
 		registry.namedType[shortTypeName] = structType
 	}

@@ -45,7 +45,7 @@ func getErrorBody(config cfg.Config, res *jira.Response) error {
 // as well as swap in other implementations, such as for dry run
 // or test mocking.
 type JIRAClient interface {
-	ListIssues(ids []int) ([]jira.Issue, error)
+	ListIssues(ids []int64) ([]jira.Issue, error)
 	GetIssue(key string) (jira.Issue, error)
 	CreateIssue(issue jira.Issue) (jira.Issue, error)
 	UpdateIssue(issue jira.Issue) (jira.Issue, error)
@@ -112,7 +112,7 @@ type realJIRAClient struct {
 // ListIssues returns a list of JIRA issues on the configured project which
 // have GitHub IDs in the provided list. `ids` should be a comma-separated
 // list of GitHub IDs.
-func (j realJIRAClient) ListIssues(ids []int) ([]jira.Issue, error) {
+func (j realJIRAClient) ListIssues(ids []int64) ([]jira.Issue, error) {
 	log := j.config.GetLogger()
 
 	idStrs := make([]string, len(ids))
@@ -399,7 +399,7 @@ func truncate(s string, length int) string {
 // list of GitHub IDs.
 //
 // This function is identical to that in realJIRAClient.
-func (j dryrunJIRAClient) ListIssues(ids []int) ([]jira.Issue, error) {
+func (j dryrunJIRAClient) ListIssues(ids []int64) ([]jira.Issue, error) {
 	log := j.config.GetLogger()
 
 	idStrs := make([]string, len(ids))

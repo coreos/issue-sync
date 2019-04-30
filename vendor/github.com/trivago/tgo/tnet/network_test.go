@@ -1,4 +1,4 @@
-// Copyright 2015-2016 trivago GmbH
+// Copyright 2015-2018 trivago N.V.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -75,4 +75,38 @@ func TestSplitAddress(t *testing.T) {
 	expect.Equal("tcp", proto)
 	expect.Equal("", addr)
 	expect.Equal("80", port)
+}
+
+func TestSplitAddressToURI(t *testing.T) {
+	expect := ttesting.NewExpect(t)
+
+	uri, err := SplitAddressToURI("unix://test.socket", "")
+	expect.NoError(err)
+	expect.Equal("unix", uri.Protocol)
+	expect.Equal("test.socket", uri.Address)
+	expect.Equal(uint16(0), uri.Port)
+
+	uri, err = SplitAddressToURI("udp://192.168.0.1:20", "")
+	expect.NoError(err)
+	expect.Equal("udp", uri.Protocol)
+	expect.Equal("192.168.0.1", uri.Address)
+	expect.Equal(uint16(20), uri.Port)
+
+	uri, err = SplitAddressToURI("192.168.0.1:20", "tcp")
+	expect.NoError(err)
+	expect.Equal("tcp", uri.Protocol)
+	expect.Equal("192.168.0.1", uri.Address)
+	expect.Equal(uint16(20), uri.Port)
+
+	uri, err = SplitAddressToURI("80", "tcp")
+	expect.NoError(err)
+	expect.Equal("tcp", uri.Protocol)
+	expect.Equal("", uri.Address)
+	expect.Equal(uint16(80), uri.Port)
+
+	uri, err = SplitAddressToURI("tcp://80", "")
+	expect.NoError(err)
+	expect.Equal("tcp", uri.Protocol)
+	expect.Equal("", uri.Address)
+	expect.Equal(uint16(80), uri.Port)
 }
