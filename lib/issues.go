@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -208,6 +209,16 @@ func CreateIssue(config cfg.Config, issue github.Issue, ghClient clients.GitHubC
 	if err != nil {
 		return err
 	}
+
+	user, repo := config.GetRepo()
+	url := "https://github.com/" + user + "/" + repo + "/issues/" + strconv.Itoa(issue.GetNumber())
+	remoteLink := clients.RemoteLink {
+		Object: clients.RemoteLinkObject {
+			Url:   url,
+			Title: url,
+		},
+	}
+	jClient.CreateIssueRemoteLink(jIssue, remoteLink)
 
 	log.Debugf("Created JIRA issue %s!", jIssue.Key)
 

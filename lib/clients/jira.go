@@ -51,6 +51,7 @@ type JIRAClient interface {
 	UpdateIssue(issue jira.Issue) (jira.Issue, error)
 	CreateComment(issue jira.Issue, comment github.IssueComment, github GitHubClient) (jira.Comment, error)
 	UpdateComment(issue jira.Issue, id string, comment github.IssueComment, github GitHubClient) (jira.Comment, error)
+	CreateIssueRemoteLink(issue jira.Issue, remoteLink RemoteLink) (error)
 }
 
 // NewJIRAClient creates a new JIRAClient and configures it with
@@ -207,6 +208,15 @@ func (j realJIRAClient) CreateIssue(issue jira.Issue) (jira.Issue, error) {
 	return *is, nil
 }
 
+type RemoteLink struct {
+	Object     RemoteLinkObject `json:"object" structs:"object"`
+}
+
+type RemoteLinkObject struct {
+	Url        string `json:"url" structs:"url"`
+	Title      string `json:"title" structs:"title"`
+}
+
 // UpdateIssue updates a given issue (identified by the Key field of the provided
 // issue object) with the fields on the provided issue. It returns the updated
 // issue as it exists on JIRA.
@@ -333,6 +343,29 @@ func (j realJIRAClient) UpdateComment(issue jira.Issue, id string, comment githu
 		return jira.Comment{}, fmt.Errorf("Update JIRA comment failed: expected *jira.Comment; got %T", com)
 	}
 	return *co, nil
+}
+
+// CreateIssueLink creates an issue remotelink
+func (j realJIRAClient) CreateIssueRemoteLink(issue jira.Issue, remoteLink RemoteLink) (error) {
+	log := j.config.GetLogger()
+
+	req, err := j.client.NewRequest("POST", fmt.Sprintf("rest/api/2/issue/%s/remotelink", issue.Key), remoteLink)
+	if err != nil {
+		log.Errorf("Error creating remotelink: %s", err)
+		return err
+	}
+
+	_, res, err := j.request(func() (interface{}, *jira.Response, error) {
+		res, err := j.client.Do(req, nil)
+		return nil, res, err
+	})
+
+	if err != nil {
+		log.Errorf("Error creating remotelink: %v", err)
+		return getErrorBody(j.config, res)
+	}
+
+	return nil
 }
 
 // request takes an API function from the JIRA library
@@ -631,4 +664,20 @@ func (j dryrunJIRAClient) request(f func() (interface{}, *jira.Response, error))
 	})
 
 	return ret, res, backoffErr
+}
+
+// CreateIssue prints out the fields that would be set on a new issue were
+// it to be created according to the provided issue object. It returns the
+// provided issue object as-is.
+func (j dryrunJIRAClient) CreateIssueRemoteLink(issue jira.Issue, remoteLink RemoteLink) (error) {
+	log := j.config.GetLogger()
+
+	log.Info("")
+	log.Info("Create new JIRA issue remotelink:")
+	log.Infof("  Issue: %s", issue.Key)
+	log.Infof("  Url: %s", remoteLink.Object.Url)
+	log.Infof("  Title: %d", remoteLink.Object.Title)
+	log.Info("")
+
+	return nil
 }
