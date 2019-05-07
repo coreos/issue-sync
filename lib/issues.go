@@ -37,15 +37,18 @@ func CompareIssues(config cfg.Config, ghClient clients.GitHubClient, jiraClient 
 		ids[i] = v.GetID()
 	}
 
-	jiraIssues, err := jiraClient.ListIssues(ids)
-	if err != nil {
-		return err
-	}
-
 	log.Debug("Collected all JIRA issues")
 
 	for _, ghIssue := range ghIssues {
 		found := false
+
+		ids := make([]int, 1)
+		ids[0] = *ghIssue.ID
+		jiraIssues, err := jiraClient.ListIssues(ids)
+		if err != nil {
+			return err
+		}
+
 		for _, jIssue := range jiraIssues {
 			id, _ := jIssue.Fields.Unknowns.Int(config.GetFieldKey(cfg.GitHubID))
 			if int64(*ghIssue.ID) == id {
