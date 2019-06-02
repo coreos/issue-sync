@@ -9,7 +9,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +70,7 @@ func TestValidatePayload(t *testing.T) {
 		if test.signature != "" {
 			req.Header.Set(signatureHeader, test.signature)
 		}
+		req.Header.Set("Content-Type", "application/json")
 
 		got, err := ValidatePayload(req, secretKey)
 		if err != nil {
@@ -82,11 +85,111 @@ func TestValidatePayload(t *testing.T) {
 	}
 }
 
+func TestValidatePayload_FormGet(t *testing.T) {
+	payload := `{"yo":true}`
+	signature := "sha1=3374ef144403e8035423b23b02e2c9d7a4c50368"
+	secretKey := []byte("0123456789abcdef")
+
+	form := url.Values{}
+	form.Add("payload", payload)
+	req, err := http.NewRequest("POST", "http://localhost/event", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.PostForm = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(signatureHeader, signature)
+
+	got, err := ValidatePayload(req, secretKey)
+	if err != nil {
+		t.Errorf("ValidatePayload(%#v): err = %v, want nil", payload, err)
+	}
+	if string(got) != payload {
+		t.Errorf("ValidatePayload = %q, want %q", got, payload)
+	}
+
+	// check that if payload is invalid we get error
+	req.Header.Set(signatureHeader, "invalid signature")
+	if _, err = ValidatePayload(req, []byte{0}); err == nil {
+		t.Error("ValidatePayload = nil, want err")
+	}
+}
+
+func TestValidatePayload_FormPost(t *testing.T) {
+	payload := `{"yo":true}`
+	signature := "sha1=3374ef144403e8035423b23b02e2c9d7a4c50368"
+	secretKey := []byte("0123456789abcdef")
+
+	form := url.Values{}
+	form.Set("payload", payload)
+	buf := bytes.NewBufferString(form.Encode())
+	req, err := http.NewRequest("POST", "http://localhost/event", buf)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(signatureHeader, signature)
+
+	got, err := ValidatePayload(req, secretKey)
+	if err != nil {
+		t.Errorf("ValidatePayload(%#v): err = %v, want nil", payload, err)
+	}
+	if string(got) != payload {
+		t.Errorf("ValidatePayload = %q, want %q", got, payload)
+	}
+
+	// check that if payload is invalid we get error
+	req.Header.Set(signatureHeader, "invalid signature")
+	if _, err = ValidatePayload(req, []byte{0}); err == nil {
+		t.Error("ValidatePayload = nil, want err")
+	}
+}
+
+func TestValidatePayload_InvalidContentType(t *testing.T) {
+	req, err := http.NewRequest("POST", "http://localhost/event", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "invalid content type")
+	if _, err = ValidatePayload(req, nil); err == nil {
+		t.Error("ValidatePayload = nil, want err")
+	}
+}
+
+func TestValidatePayload_NoSecretKey(t *testing.T) {
+	payload := `{"yo":true}`
+
+	form := url.Values{}
+	form.Set("payload", payload)
+	buf := bytes.NewBufferString(form.Encode())
+	req, err := http.NewRequest("POST", "http://localhost/event", buf)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	got, err := ValidatePayload(req, nil)
+	if err != nil {
+		t.Errorf("ValidatePayload(%#v): err = %v, want nil", payload, err)
+	}
+	if string(got) != payload {
+		t.Errorf("ValidatePayload = %q, want %q", got, payload)
+	}
+}
+
 func TestParseWebHook(t *testing.T) {
 	tests := []struct {
 		payload     interface{}
 		messageType string
 	}{
+		{
+			payload:     &CheckRunEvent{},
+			messageType: "check_run",
+		},
+		{
+			payload:     &CheckSuiteEvent{},
+			messageType: "check_suite",
+		},
 		{
 			payload:     &CommitCommentEvent{},
 			messageType: "commit_comment",
@@ -135,6 +238,10 @@ func TestParseWebHook(t *testing.T) {
 		{
 			payload:     &LabelEvent{},
 			messageType: "label",
+		},
+		{
+			payload:     &MarketplacePurchaseEvent{},
+			messageType: "marketplace_purchase",
 		},
 		{
 			payload:     &MemberEvent{},
@@ -203,6 +310,10 @@ func TestParseWebHook(t *testing.T) {
 		{
 			payload:     &RepositoryEvent{},
 			messageType: "repository",
+		},
+		{
+			payload:     &RepositoryVulnerabilityAlertEvent{},
+			messageType: "repository_vulnerability_alert",
 		},
 		{
 			payload:     &StatusEvent{},

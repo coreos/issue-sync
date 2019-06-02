@@ -21,7 +21,10 @@ import (
 
 // RepositoryContent represents a file or directory in a github repository.
 type RepositoryContent struct {
-	Type     *string `json:"type,omitempty"`
+	Type *string `json:"type,omitempty"`
+	// Target is only set if the type is "symlink" and the target is not a normal file.
+	// If Target is set, Path will be the symlink path.
+	Target   *string `json:"target,omitempty"`
 	Encoding *string `json:"encoding,omitempty"`
 	Size     *int    `json:"size,omitempty"`
 	Name     *string `json:"name,omitempty"`
@@ -248,7 +251,7 @@ func (s *RepositoriesService) GetArchiveLink(ctx context.Context, owner, repo st
 	}
 	var resp *http.Response
 	// Use http.DefaultTransport if no custom Transport is configured
-	ctx, req = withContext(ctx, req)
+	req = withContext(ctx, req)
 	if s.client.client.Transport == nil {
 		resp, err = http.DefaultTransport.RoundTrip(req)
 	} else {

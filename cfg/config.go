@@ -21,32 +21,24 @@ import (
 )
 
 // dateFormat is the format used for the `since` configuration parameter
-const dateFormat = "2006-01-02T15:04:05-0700"
+const DateFormat = "2006-01-02T15:04:05-0700"
 
 // defaultLogLevel is the level logrus should default to if the configured option can't be parsed
 const defaultLogLevel = logrus.InfoLevel
 
 // fieldKey is an enum-like type to represent the customfield ID keys
-type fieldKey int
+type FieldKey int
 
 const (
-	GitHubID       fieldKey = iota
-	GitHubNumber   fieldKey = iota
-	GitHubLabels   fieldKey = iota
-	GitHubStatus   fieldKey = iota
-	GitHubReporter fieldKey = iota
-	LastISUpdate   fieldKey = iota
+	GitHubID       FieldKey = iota
+	GitHubNumber   FieldKey = iota
+	GitHubLabels   FieldKey = iota
+	GitHubStatus   FieldKey = iota
+	GitHubReporter FieldKey = iota
+	GitHubCommits  FieldKey = iota
+	LastISUpdate   FieldKey = iota
+	GitHubIssueData 	   FieldKey = iota
 )
-
-// fields represents the custom field IDs of the JIRA custom fields we care about
-type fields struct {
-	githubID       string
-	githubNumber   string
-	githubLabels   string
-	githubReporter string
-	githubStatus   string
-	lastUpdate     string
-}
 
 // Config is the root configuration object the application creates.
 type Config struct {
@@ -62,7 +54,7 @@ type Config struct {
 	basicAuth bool
 
 	// fieldIDs is the list of custom fields we pulled from the `fields` JIRA endpoint.
-	fieldIDs fields
+	fieldIDs map[FieldKey]string
 
 	// project represents the JIRA project the user has requested.
 	project jira.Project
@@ -70,6 +62,8 @@ type Config struct {
 	// since is the parsed value of the `since` configuration parameter, which is the earliest that
 	// a GitHub issue can have been updated to be retrieved.
 	since time.Time
+
+	fieldMapper FieldMapper
 }
 
 // NewConfig creates a new, immutable configuration object. This object
@@ -89,7 +83,7 @@ func NewConfig(cmd *cobra.Command) (Config, error) {
 
 	config.cmdFile = config.cmdConfig.ConfigFileUsed()
 
-	config.log = *newLogger("issue-sync", config.cmdConfig.GetString("log-level"))
+	config.log = *NewLogger("issue-sync", config.cmdConfig.GetString("log-level"))
 
 	if err := config.validateConfig(); err != nil {
 		return Config{}, err
@@ -116,7 +110,18 @@ func (c *Config) LoadJIRAConfig(client jira.Client) error {
 	}
 	c.project = *proj
 
-	c.fieldIDs, err = c.getFieldIDs(client)
+
+	if c.IsUsingGitHubIssueDataField() {
+		c.fieldMapper = JsonFieldMapper{
+			Config: c,
+		}
+	} else {
+		c.fieldMapper = DefaultFieldMapper{
+			Config: c,
+		}
+	}
+
+	c.fieldIDs, err = c.fieldMapper.GetFieldIDs(client)
 	if err != nil {
 		return err
 	}
@@ -155,6 +160,15 @@ func (c Config) IsDryRun() bool {
 	return c.cmdConfig.GetBool("dry-run")
 }
 
+// FullSyncAlways returns whether the application should rewrite the config file to set "since" to now or if it should
+// always do a full sync from the given sync. Full sync is required for GitHubProjectBoard -> Jira State syncing. This
+// is becuase moving a GitHub issue on the project board does not change the last updated time of the issue itself -
+// only that of the project card.
+func (c Config) FullSyncAlways() bool {
+	return c.cmdConfig.GetBool("full-sync-always")
+}
+
+
 // IsDaemon returns whether the application is running as a daemon
 func (c Config) IsDaemon() bool {
 	return c.cmdConfig.GetDuration("period") != 0
@@ -171,27 +185,20 @@ func (c Config) GetTimeout() time.Duration {
 }
 
 // GetFieldID returns the customfield ID of a JIRA custom field.
-func (c Config) GetFieldID(key fieldKey) string {
-	switch key {
-	case GitHubID:
-		return c.fieldIDs.githubID
-	case GitHubNumber:
-		return c.fieldIDs.githubNumber
-	case GitHubLabels:
-		return c.fieldIDs.githubLabels
-	case GitHubReporter:
-		return c.fieldIDs.githubReporter
-	case GitHubStatus:
-		return c.fieldIDs.githubStatus
-	case LastISUpdate:
-		return c.fieldIDs.lastUpdate
-	default:
+func (c Config) GetFieldID(key FieldKey) string {
+	v, ok := c.fieldIDs[key]
+	if !ok {
 		return ""
 	}
+	return v
 }
 
-// GetFieldKey returns customfield_XXXXX, where XXXXX is the custom field ID (see GetFieldID).
-func (c Config) GetFieldKey(key fieldKey) string {
+func (c Config) IsUsingGitHubIssueDataField() bool {
+	return c.cmdConfig.GetString("github-to-jira-field-mapper") == "json-field-mapper"
+}
+
+// GetCompleteFieldKey returns customfield_XXXXX, where XXXXX is the custom field ID (see GetFieldID).
+func (c Config) GetCompleteFieldKey(key FieldKey) string {
 	return fmt.Sprintf("customfield_%s", c.GetFieldID(key))
 }
 
@@ -213,6 +220,10 @@ func (c Config) GetRepo() (string, string) {
 	return parts[0], parts[1]
 }
 
+func (c Config) GetFieldMapper() FieldMapper {
+	return c.fieldMapper
+}
+
 // SetJIRAToken adds the JIRA OAuth tokens in the Viper configuration, ensuring that they
 // are saved for future runs.
 func (c Config) SetJIRAToken(token *oauth1.Token) {
@@ -224,11 +235,12 @@ func (c Config) SetJIRAToken(token *oauth1.Token) {
 type configFile struct {
 	LogLevel    string        `json:"log-level" mapstructure:"log-level"`
 	GithubToken string        `json:"github-token" mapstructure:"github-token"`
-	JIRAUser    string        `json:"jira-user" mapstructure:"jira-user"`
-	JIRAToken   string        `json:"jira-token" mapstructure:"jira-token"`
-	JIRASecret  string        `json:"jira-secret" mapstructure:"jira-secret"`
-	JIRAKey     string        `json:"jira-private-key-path" mapstructure:"jira-private-key-path"`
-	JIRACKey    string        `json:"jira-consumer-key" mapstructure:"jira-consumer-key"`
+	JIRAUser    string        `json:"jira-user,omitempty" mapstructure:"jira-user"`
+	JIRAPass  	string        `json:"jira-pass,omitempty" mapstructure:"jira-pass"`
+	JIRAToken   string        `json:"jira-token,omitempty" mapstructure:"jira-token"`
+	JIRASecret  string        `json:"jira-secret,omitempty" mapstructure:"jira-secret"`
+	JIRAKey     string        `json:"jira-private-key-path,omitempty" mapstructure:"jira-private-key-path"`
+	JIRACKey    string        `json:"jira-consumer-key,omitempty" mapstructure:"jira-consumer-key"`
 	RepoName    string        `json:"repo-name" mapstructure:"repo-name"`
 	JIRAURI     string        `json:"jira-uri" mapstructure:"jira-uri"`
 	JIRAProject string        `json:"jira-project" mapstructure:"jira-project"`
@@ -238,12 +250,14 @@ type configFile struct {
 
 // SaveConfig updates the `since` parameter to now, then saves the configuration file.
 func (c *Config) SaveConfig() error {
-	c.cmdConfig.Set("since", time.Now().Format(dateFormat))
+	c.cmdConfig.Set("since", time.Now().Format(DateFormat))
 
 	var cf configFile
-	c.cmdConfig.Unmarshal(&cf)
+	var err error
+	err = c.cmdConfig.Unmarshal(&cf)
+	var b []byte
 
-	b, err := json.MarshalIndent(cf, "", "  ")
+	b, err = json.MarshalIndent(cf, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -317,7 +331,7 @@ func parseLogLevel(level string) logrus.Level {
 // newLogger uses the log level provided in the configuration
 // to create a new logrus logger and set fields on it to make
 // it easy to use.
-func newLogger(app, level string) *logrus.Entry {
+func NewLogger(app, level string) *logrus.Entry {
 	logger := logrus.New()
 	logger.Level = parseLogLevel(level)
 	logEntry := logrus.NewEntry(logger).WithFields(logrus.Fields{
@@ -416,7 +430,7 @@ func (c *Config) validateConfig() error {
 		c.cmdConfig.Set("since", "1970-01-01T00:00:00+0000")
 	}
 
-	since, err := time.Parse(dateFormat, sinceStr)
+	since, err := time.Parse(DateFormat, sinceStr)
 	if err != nil {
 		return errors.New("Since date must be in ISO-8601 format")
 	}
@@ -445,57 +459,4 @@ type jiraField struct {
 		Custom   string `json:"custom,omitempty"`
 		CustomID int    `json:"customId,omitempty"`
 	} `json:"schema,omitempty"`
-}
-
-// getFieldIDs requests the metadata of every issue field in the JIRA
-// project, and saves the IDs of the custom fields used by issue-sync.
-func (c Config) getFieldIDs(client jira.Client) (fields, error) {
-	c.log.Debug("Collecting field IDs.")
-	req, err := client.NewRequest("GET", "/rest/api/2/field", nil)
-	if err != nil {
-		return fields{}, err
-	}
-	jFields := new([]jiraField)
-
-	_, err = client.Do(req, jFields)
-	if err != nil {
-		return fields{}, err
-	}
-
-	fieldIDs := fields{}
-
-	for _, field := range *jFields {
-		switch field.Name {
-		case "GitHub ID":
-			fieldIDs.githubID = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Number":
-			fieldIDs.githubNumber = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Labels":
-			fieldIDs.githubLabels = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Status":
-			fieldIDs.githubStatus = fmt.Sprint(field.Schema.CustomID)
-		case "GitHub Reporter":
-			fieldIDs.githubReporter = fmt.Sprint(field.Schema.CustomID)
-		case "Last Issue-Sync Update":
-			fieldIDs.lastUpdate = fmt.Sprint(field.Schema.CustomID)
-		}
-	}
-
-	if fieldIDs.githubID == "" {
-		return fieldIDs, errors.New("could not find ID of 'GitHub ID' custom field; check that it is named correctly")
-	} else if fieldIDs.githubNumber == "" {
-		return fieldIDs, errors.New("could not find ID of 'GitHub Number' custom field; check that it is named correctly")
-	} else if fieldIDs.githubLabels == "" {
-		return fieldIDs, errors.New("could not find ID of 'Github Labels' custom field; check that it is named correctly")
-	} else if fieldIDs.githubStatus == "" {
-		return fieldIDs, errors.New("could not find ID of 'Github Status' custom field; check that it is named correctly")
-	} else if fieldIDs.githubReporter == "" {
-		return fieldIDs, errors.New("could not find ID of 'Github Reporter' custom field; check that it is named correctly")
-	} else if fieldIDs.lastUpdate == "" {
-		return fieldIDs, errors.New("could not find ID of 'Last Issue-Sync Update' custom field; check that it is named correctly")
-	}
-
-	c.log.Debug("All fields have been checked.")
-
-	return fieldIDs, nil
 }

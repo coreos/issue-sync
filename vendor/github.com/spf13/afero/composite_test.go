@@ -1,7 +1,9 @@
 package afero
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -50,7 +52,6 @@ func CleanupTempDirs(t *testing.T) {
 func TestUnionCreateExisting(t *testing.T) {
 	base := &MemMapFs{}
 	roBase := &ReadOnlyFs{source: base}
-
 	ufs := NewCopyOnWriteFs(roBase, &MemMapFs{})
 
 	base.MkdirAll("/home/test", 0777)
@@ -364,5 +365,143 @@ func TestUnionCacheExpire(t *testing.T) {
 	data, _ := ReadFile(ufs, "/data/file.txt")
 	if string(data) != "Another test" {
 		t.Errorf("cache time failed: <%s>", data)
+	}
+}
+
+func TestCacheOnReadFsNotInLayer(t *testing.T) {
+	base := NewMemMapFs()
+	layer := NewMemMapFs()
+	fs := NewCacheOnReadFs(base, layer, 0)
+
+	fh, err := base.Create("/file.txt")
+	if err != nil {
+		t.Fatal("unable to create file: ", err)
+	}
+
+	txt := []byte("This is a test")
+	fh.Write(txt)
+	fh.Close()
+
+	fh, err = fs.Open("/file.txt")
+	if err != nil {
+		t.Fatal("could not open file: ", err)
+	}
+
+	b, err := ReadAll(fh)
+	fh.Close()
+
+	if err != nil {
+		t.Fatal("could not read file: ", err)
+	} else if !bytes.Equal(txt, b) {
+		t.Fatalf("wanted file text %q, got %q", txt, b)
+	}
+
+	fh, err = layer.Open("/file.txt")
+	if err != nil {
+		t.Fatal("could not open file from layer: ", err)
+	}
+	fh.Close()
+}
+
+// #194
+func TestUnionFileReaddirEmpty(t *testing.T) {
+	osFs := NewOsFs()
+
+	base := NewMemMapFs()
+	overlay := NewMemMapFs()
+	ufs := &CopyOnWriteFs{base: base, layer: overlay}
+	mem := NewMemMapFs()
+
+	// The OS file will return io.EOF on end of directory.
+	for _, fs := range []Fs{osFs, ufs, mem} {
+		baseDir, err := TempDir(fs, "", "empty-dir")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		f, err := fs.Open(baseDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		names, err := f.Readdirnames(1)
+		if err != io.EOF {
+			t.Fatal(err)
+		}
+
+		if len(names) != 0 {
+			t.Fatal("should be empty")
+		}
+
+		f.Close()
+
+		fs.RemoveAll(baseDir)
+	}
+}
+
+// #197
+func TestUnionFileReaddirDuplicateEmpty(t *testing.T) {
+	base := NewMemMapFs()
+	dir, err := TempDir(base, "", "empty-dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Overlay shares same empty directory as base
+	overlay := NewMemMapFs()
+	err = overlay.Mkdir(dir, 0700)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ufs := &CopyOnWriteFs{base: base, layer: overlay}
+
+	f, err := ufs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	names, err := f.Readdirnames(0)
+
+	if err == io.EOF {
+		t.Errorf("unexpected io.EOF error")
+	}
+
+	if len(names) != 0 {
+		t.Fatal("should be empty")
+	}
+}
+
+func TestUnionFileReaddirAskForTooMany(t *testing.T) {
+	base := &MemMapFs{}
+	overlay := &MemMapFs{}
+
+	for i := 0; i < 5; i++ {
+		WriteFile(base, fmt.Sprintf("file%d.txt", i), []byte("afero"), 0777)
+	}
+
+	ufs := &CopyOnWriteFs{base: base, layer: overlay}
+
+	f, err := ufs.Open("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer f.Close()
+
+	names, err := f.Readdirnames(6)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(names) != 5 {
+		t.Fatal(names)
+	}
+
+	// End of directory
+	_, err = f.Readdirnames(3)
+	if err != io.EOF {
+		t.Fatal(err)
 	}
 }
